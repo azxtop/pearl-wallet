@@ -1,4 +1,4 @@
-# Pearl Wallet 0.2.8
+# Pearl Wallet 0.2.9
 
 Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；SafeTrade 只读展示 PRL/USDT 行情及 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
 
@@ -24,7 +24,7 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.8-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.8-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.9-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.9-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 
@@ -43,6 +43,10 @@ APK 位于 `releases/`。`PearlWallet-0.2.8-debug.apk` 可覆盖此前安装的 
 ## 已知限制
 
 无法保证钱包“100% 安全”。签名测试使用模拟 UTXO，没有广播真实主网转账。链上余额依赖 `pearlchain.live`，失败时依赖 PearlResearch Blockbook，不是本机完整节点验证；前 20 个地址以外的资产目前不会自动发现。观察模式只读，但所查询的地址会发送给当前使用的浏览器。不要在完成实机小额转账与独立安全审计前存入有价值的资产。
+
+## APK 更新
+
+更新检查优先读取 GitHub 仓库的 `server/update.json`，失败时读取现有 HTTPS 服务器。新版 App 优先下载 GitHub Release 的正式签名 APK，失败时下载服务器副本。`apkUrl` 保留服务器地址供 0.2.8 及更早版本升级；`githubApkUrl` 提供新版的首选地址。两份 APK 必须具有相同的 SHA-256。
 
 ## License
 

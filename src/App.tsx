@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { wallet } from "./crypto/client";
 import { biometric } from "./lib/biometric";
 import { installUpdate } from "./lib/update";
+import { isNewerVersion, parseUpdateManifest, UPDATE_MANIFEST_URLS } from "./lib/update-manifest";
 import { broadcastViaExplorer } from "./lib/explorer";
 import { WalletSynchronizer } from "./lib/wallet-sync";
 import { loadSnapshotCache, saveSnapshotCache, type SnapshotCache } from "./lib/snapshot-cache";
@@ -28,8 +29,7 @@ type ExchangeData = {
 };
 
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.8";
-const UPDATE_URL = "https://pearlwallet.az1993.xyz/api/update";
+const APP_VERSION = "0.2.9";
 const API_URL = import.meta.env.VITE_SAFETRADE_API_URL || "https://pearlwallet.az1993.xyz/api/safetrade";
 const READ_TOKEN = import.meta.env.VITE_SAFETRADE_READ_TOKEN || "";
 type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
@@ -592,20 +592,23 @@ export default function App() {
   async function checkUpdate() {
     setUpdateStatus("正在检查…");
     try {
-      const response = Capacitor.isNativePlatform()
-        ? await CapacitorHttp.get({ url: UPDATE_URL, connectTimeout: 8000, readTimeout: 8000 })
-        : { status: 200, data: await (await fetch(UPDATE_URL, { signal: AbortSignal.timeout(8000) })).json() };
-      if (response.status !== 200) throw new Error("更新服务不可用");
-      const manifest = response.data as { version?: string; apkUrl?: string; sha256?: string };
-      if (!/^\d+\.\d+\.\d+$/.test(manifest.version || "")) throw new Error("版本信息无效");
-      const current = APP_VERSION.split(".").map(Number);
-      const latest = manifest.version!.split(".").map(Number);
-      if (!latest.some((value, index) => value > current[index]! && latest.slice(0, index).every((v, i) => v === current[i]))) {
+      let manifest: ReturnType<typeof parseUpdateManifest> | null = null;
+      for (const url of UPDATE_MANIFEST_URLS) {
+        try {
+          const response = Capacitor.isNativePlatform()
+            ? await CapacitorHttp.get({ url, connectTimeout: 8000, readTimeout: 8000 })
+            : { status: 200, data: await (await fetch(url, { signal: AbortSignal.timeout(8000) })).text() };
+          if (response.status !== 200) throw new Error("更新服务不可用");
+          manifest = parseUpdateManifest(response.data);
+          break;
+        } catch { /* Try the backup manifest. */ }
+      }
+      if (!manifest) throw new Error("更新服务不可用");
+      if (!isNewerVersion(manifest.version, APP_VERSION)) {
         setUpdateStatus("已是最新版本"); return;
       }
-      if (!manifest.apkUrl?.startsWith("https://pearlwallet.az1993.xyz/releases/") || !/^[0-9a-f]{64}$/i.test(manifest.sha256 || "")) throw new Error("安装包信息无效");
       setUpdateStatus(`正在下载 ${manifest.version}…`);
-      await installUpdate(manifest.apkUrl, manifest.sha256!);
+      await installUpdate(manifest.apkUrl, manifest.backupApkUrl, manifest.sha256);
       setUpdateStatus("请按系统提示安装更新");
     } catch (failure) { setUpdateStatus(failure instanceof Error ? failure.message : "检查更新失败"); }
   }
