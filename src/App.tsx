@@ -6,6 +6,7 @@ import { wallet } from "./crypto/client";
 import { biometric } from "./lib/biometric";
 import { installUpdate } from "./lib/update";
 import { isNewerVersion, parseUpdateManifest, UPDATE_MANIFEST_URLS } from "./lib/update-manifest";
+import { loadPendingOutgoing, pendingFromBroadcast, projectWalletSnapshot, reconcilePendingOutgoing, savePendingOutgoing } from "./lib/pending-outgoing";
 import { broadcastViaExplorer } from "./lib/explorer";
 import { WalletSynchronizer } from "./lib/wallet-sync";
 import { loadSnapshotCache, saveSnapshotCache, type SnapshotCache } from "./lib/snapshot-cache";
@@ -29,7 +30,7 @@ type ExchangeData = {
 };
 
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.9";
+const APP_VERSION = "0.2.10";
 const API_URL = import.meta.env.VITE_SAFETRADE_API_URL || "https://pearlwallet.az1993.xyz/api/safetrade";
 const READ_TOKEN = import.meta.env.VITE_SAFETRADE_READ_TOKEN || "";
 type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
@@ -121,10 +122,13 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("wallet");
   const [walletPage, setWalletPage] = useState<WalletPage>("home");
   const [snapshotCache, setSnapshotCache] = useState<SnapshotCache>(loadSnapshotCache);
+  const [pendingOutgoing, setPendingOutgoing] = useState(loadPendingOutgoing);
   const [freshSnapshotKey, setFreshSnapshotKey] = useState<string | null>(null);
   const snapshotKey = activeProfile && addresses ? `${activeProfile.id}:${addresses.join("|")}` : null;
   const cached = activeProfile && addresses ? snapshotCache[activeProfile.id] : null;
   const snapshot = cached && cached.pool === addresses?.join("|") ? cached.data : null;
+  const localPending = activeProfile && addresses ? pendingOutgoing.filter((item) => item.profileId === activeProfile.id && item.pool === addresses.join("|")) : [];
+  const projected = snapshot ? projectWalletSnapshot(snapshot, localPending) : null;
   const snapshotFresh = !!snapshotKey && freshSnapshotKey === snapshotKey;
   const [snapshotError, setSnapshotError] = useState("");
   const [walletRefreshing, setWalletRefreshing] = useState(false);
@@ -168,6 +172,8 @@ export default function App() {
   const walletSynchronizer = useRef(new WalletSynchronizer());
   const snapshotCacheRef = useRef(snapshotCache);
   snapshotCacheRef.current = snapshotCache;
+  const pendingOutgoingRef = useRef(pendingOutgoing);
+  pendingOutgoingRef.current = pendingOutgoing;
   const backupRevealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const secretRevealSequence = useRef(0);
   const walletAccessGeneration = useRef(0);
@@ -206,6 +212,12 @@ export default function App() {
       }, urgent);
       if (sequence === walletCheckSequence.current && result.kind === "updated" && result.snapshot) {
         const data = result.snapshot;
+        const remaining = reconcilePendingOutgoing(pendingOutgoingRef.current, profileId, poolKey, data);
+        if (remaining.length !== pendingOutgoingRef.current.length) {
+          pendingOutgoingRef.current = remaining;
+          setPendingOutgoing(remaining);
+          try { savePendingOutgoing(remaining); } catch (failure) { console.warn("Pending transaction save failed", failure); }
+        }
         setSnapshotCache((previous) => {
           const next = { ...previous, [profileId]: { pool: poolKey, data } };
           snapshotCacheRef.current = next;
@@ -455,7 +467,7 @@ export default function App() {
       if (!snapshotFresh || snapshotError) throw new Error("请先重新同步链上余额");
       if (snapshot.partial) throw new Error("链上交易记录不完整，暂不能安全转账");
       if (!isValidPearlAddress(sendAddress.trim())) throw new Error("Pearl 收款地址无效");
-      setPreview(prepareSend(snapshot.utxos, sendAddress.trim(), parsePrl(sendAmount.trim()), addresses[0]!));
+      setPreview(prepareSend(projected?.availableUtxos ?? snapshot.utxos, sendAddress.trim(), parsePrl(sendAmount.trim()), addresses[0]!));
       setPreviewScanSequence(walletScanSequence.current);
     } catch (failure) { setError(failure instanceof Error ? failure.message : "无法创建交易预览"); }
   }
@@ -473,6 +485,15 @@ export default function App() {
       catch (failure) {
         if (!(failure instanceof Error) || !/Pearl 节点 (?:连接失败|HTTP (?:429|5\d\d))/.test(failure.message)) throw failure;
         txid = await broadcastViaExplorer(signed.rawHex);
+      }
+      if (activeProfile) {
+        try {
+          const record = pendingFromBroadcast(activeProfile.id, addresses, txid, preview);
+          const next = [...pendingOutgoingRef.current.filter((item) => item.txid.toLowerCase() !== txid.toLowerCase()), record];
+          pendingOutgoingRef.current = next;
+          setPendingOutgoing(next);
+          savePendingOutgoing(next);
+        } catch (failure) { console.warn("Pending transaction record failed", failure); }
       }
       setPreview(null); setAuthPassword(""); setSendAddress(""); setSendAmount(""); setWalletPage("home");
       setNotice(`转账已广播：${txid.slice(0, 14)}…`);
@@ -613,7 +634,8 @@ export default function App() {
     } catch (failure) { setUpdateStatus(failure instanceof Error ? failure.message : "检查更新失败"); }
   }
 
-  const balanceLabel = snapshot ? formatPrl(snapshot.balanceGrains) : "—";
+  const balanceLabel = projected ? formatPrl(projected.balanceGrains) : "—";
+  const visibleActivities = projected?.activities ?? snapshot?.activities ?? [];
 
   function profilePicker() {
     return <div className="profile-picker">
@@ -686,21 +708,21 @@ export default function App() {
         <div className="home-top">{profilePicker()}{watchMode && <span className="watch-badge">观察模式</span>}</div>
         {pullDistance > 0 && <div className="pull-indicator" style={{ height: pullDistance }}>{pullDistance >= 48 ? "松开刷新" : "下拉刷新"}</div>}
         {walletRefreshing && <div className="pull-status">正在同步链上数据…{snapshot && !snapshotFresh ? " 当前显示上次记录" : ""}</div>}
-        <div className="balance-block"><p>Total Balance</p><h1>{balanceLabel} <span>PRL</span></h1>{!!snapshot?.pendingGrains && <small>待确认 {formatPrl(snapshot.pendingGrains)} PRL</small>}{snapshot?.partial && <small>链上记录未完全同步</small>}</div>
+        <div className="balance-block"><p>{projected?.estimated ? "预计总余额" : "Total Balance"}</p><h1>{balanceLabel} <span>PRL</span></h1>{!!projected?.pendingGrains && <small>待确认 {formatPrl(projected.pendingGrains)} PRL · 暂不可转</small>}{projected?.estimated && <small>含本机待确认转账估算，以链上确认为准</small>}{snapshot?.partial && <small>链上记录未完全同步</small>}</div>
         <div className="actions">{!watchMode && <ActionCard icon="send" label="Send" onClick={() => setWalletPage("send")} />}<ActionCard icon="receive" label="Receive" onClick={() => setWalletPage("receive")} /></div>
         <div className="section-heading"><h2>Activity</h2><div className="section-actions"><button aria-label="刷新链上数据" onClick={() => activeProfile && refreshWallet(activeProfile.id, addresses)}><Icon name="refresh" size={19} /></button><button onClick={() => setWalletPage("history")}>View All</button></div></div>
         {snapshotError && <div className="inline-error">{snapshotError}{snapshot && <span> · 显示上次同步结果，转账前请重试</span>}<button onClick={() => activeProfile && refreshWallet(activeProfile.id, addresses)}>重试</button></div>}
         {!snapshot && !snapshotError && <p className="muted">正在同步链上记录…</p>}
-        {snapshot && snapshot.activities.length === 0 && <div className="empty-card">暂无链上交易</div>}
-        {snapshot?.activities.slice(0, 4).map((item) => <div className="activity" key={item.txid}><span className="activity-icon"><Icon name={item.deltaGrains >= 0n ? "receive" : "send"} size={18} /></span><div><strong>{item.deltaGrains >= 0n ? "Received" : "Sent"}</strong><small>{item.confirmations === 0 ? "待确认" : item.time ? new Date(item.time * 1000).toLocaleString("zh-CN") : "时间未知"}</small></div><em className={item.deltaGrains >= 0n ? "positive" : "negative"}>{item.deltaGrains >= 0n ? "+" : ""}{formatPrl(item.deltaGrains)} PRL</em></div>)}
+        {snapshot && visibleActivities.length === 0 && <div className="empty-card">暂无链上交易</div>}
+        {visibleActivities.slice(0, 4).map((item) => <div className="activity" key={item.txid}><span className="activity-icon"><Icon name={item.deltaGrains >= 0n ? "receive" : "send"} size={18} /></span><div><strong>{item.deltaGrains >= 0n ? "Received" : "Sent"}</strong><small>{projected?.staleTxids.has(item.txid.toLowerCase()) ? "待核对" : item.confirmations === 0 ? "待确认" : item.time ? new Date(item.time * 1000).toLocaleString("zh-CN") : "时间未知"}</small></div><em className={item.deltaGrains >= 0n ? "positive" : "negative"}>{item.deltaGrains >= 0n ? "+" : ""}{formatPrl(item.deltaGrains)} PRL</em></div>)}
       </section>}
 
       {tab === "wallet" && addresses && !backupMnemonic && !addingProfile && walletPage !== "home" && <section className="subpage">
         <div className="subpage-head"><button className="back" onClick={() => { setWalletPage("home"); setPreview(null); setAuthPassword(""); }}><Icon name="back" /></button><h1>{walletPage === "send" ? "发送 PRL" : walletPage === "receive" ? "接收 PRL" : "全部记录"}</h1></div>
         {walletPage === "receive" && <div className="receive-card"><p className="muted">Pearl 主网地址</p>{receiveQr && <img src={receiveQr} alt="收款地址二维码" className="qr" />}<p className="address-text">{addresses[0]}</p><button className="secondary" onClick={() => copy(addresses[0]!)}><Icon name="copy" size={18} /> 复制地址</button></div>}
-        {walletPage === "send" && !preview && <form className="form-card" onSubmit={makePreview}><p className="muted">可用余额：{snapshotFresh && snapshot ? formatPrl(snapshot.utxos.reduce((sum, utxo) => sum + utxo.valueGrains, 0n)) : "—"} PRL</p><Field label="收款地址" value={sendAddress} onChange={setSendAddress} placeholder="prl1…" autoComplete="off" /><Field label="金额（PRL）" value={sendAmount} onChange={setSendAmount} placeholder="0.00000000" /><button className="primary" disabled={!snapshotFresh || !snapshot || !!snapshotError || busy}>预览转账</button></form>}
+        {walletPage === "send" && !preview && <form className="form-card" onSubmit={makePreview}><p className="muted">可用余额：{snapshotFresh && projected ? formatPrl(projected.availableUtxos.reduce((sum, utxo) => sum + utxo.valueGrains, 0n)) : "—"} PRL</p><Field label="收款地址" value={sendAddress} onChange={setSendAddress} placeholder="prl1…" autoComplete="off" /><Field label="金额（PRL）" value={sendAmount} onChange={setSendAmount} placeholder="0.00000000" /><button className="primary" disabled={!snapshotFresh || !snapshot || !!snapshotError || busy}>预览转账</button></form>}
         {walletPage === "send" && preview && <div className="form-card"><p className="eyebrow">CONFIRM TRANSACTION</p><h2>请核对转账信息</h2><div className="preview-row"><span>收款地址</span><strong className="break">{preview.destination}</strong></div><div className="preview-row"><span>转账金额</span><strong>{formatPrl(BigInt(preview.amountGrains))} PRL</strong></div><div className="preview-row"><span>预计矿工费</span><strong>{formatPrl(BigInt(preview.feeGrains))} PRL</strong></div><div className="preview-row"><span>找零</span><strong>{formatPrl(BigInt(preview.changeGrains))} PRL</strong></div><Field label="钱包密码" value={authPassword} onChange={setAuthPassword} type="password" autoComplete="current-password" /><button className="primary" disabled={busy || !authPassword} onClick={() => confirmSend(false)}>{busy ? "正在发送…" : "确认并发送"}</button>{fingerprintEnabled && <button className="secondary wide" disabled={busy} onClick={() => confirmSend(true)}><Icon name="finger" size={18} /> 使用指纹确认</button>}<button className="text-button" onClick={() => { setPreview(null); setAuthPassword(""); }}>返回修改</button></div>}
-        {walletPage === "history" && <div className="history-list">{!snapshot?.activities.length && <div className="empty-card">暂无链上交易</div>}{snapshot?.activities.map((item) => <div className="activity" key={item.txid}><span className="activity-icon"><Icon name={item.deltaGrains >= 0n ? "receive" : "send"} size={18} /></span><div><strong>{item.deltaGrains >= 0n ? "Received" : "Sent"}</strong><small>{item.confirmations === 0 ? "待确认" : item.time ? new Date(item.time * 1000).toLocaleString("zh-CN") : "时间未知"}<br />{item.txid.slice(0, 16)}…</small></div><em className={item.deltaGrains >= 0n ? "positive" : "negative"}>{item.deltaGrains >= 0n ? "+" : ""}{formatPrl(item.deltaGrains)} PRL</em></div>)}</div>}
+        {walletPage === "history" && <div className="history-list">{!visibleActivities.length && <div className="empty-card">暂无链上交易</div>}{visibleActivities.map((item) => <div className="activity" key={item.txid}><span className="activity-icon"><Icon name={item.deltaGrains >= 0n ? "receive" : "send"} size={18} /></span><div><strong>{item.deltaGrains >= 0n ? "Received" : "Sent"}</strong><small>{projected?.staleTxids.has(item.txid.toLowerCase()) ? "待核对" : item.confirmations === 0 ? "待确认" : item.time ? new Date(item.time * 1000).toLocaleString("zh-CN") : "时间未知"}<br />{item.txid.slice(0, 16)}…</small></div><em className={item.deltaGrains >= 0n ? "positive" : "negative"}>{item.deltaGrains >= 0n ? "+" : ""}{formatPrl(item.deltaGrains)} PRL</em></div>)}</div>}
       </section>}
 
       {tab === "safetrade" && <section className="trade-page"><div className="pair-head"><h1>PRL/USDT</h1><span>SafeTrade</span></div>

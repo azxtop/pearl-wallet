@@ -12,6 +12,7 @@ describe("wallet snapshot cache", () => {
     saveSnapshotCache({ first: { pool: "address-1", data: {
       balanceGrains: 123456789012345678n,
       pendingGrains: 100n,
+      pendingOutputs: [{ txid, vout: 1, valueGrains: 100n }],
       utxos: [],
       activities: [{ txid, deltaGrains: 100n, time: 1, confirmations: 0 }],
       partial: false,
@@ -20,6 +21,7 @@ describe("wallet snapshot cache", () => {
     const loaded = loadSnapshotCache(storage);
     expect(loaded.first?.data.balanceGrains).toBe(123456789012345678n);
     expect(loaded.first?.data.activities[0]?.deltaGrains).toBe(100n);
+    expect(loaded.first?.data.pendingOutputs?.[0]?.valueGrains).toBe(100n);
     expect(loaded.second).toBeUndefined();
   });
 

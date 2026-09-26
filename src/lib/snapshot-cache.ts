@@ -25,6 +25,12 @@ function decodeEntry(raw: unknown): CachedSnapshot {
       || typeof utxo.scriptHex !== "string" || !/^[\da-f]+$/i.test(utxo.scriptHex)) throw new Error("Invalid cached UTXO");
     return { txid: utxo.txid, vout: utxo.vout as number, valueGrains: amount(utxo.valueGrains), scriptHex: utxo.scriptHex, poolIndex: utxo.poolIndex as number };
   });
+  const pendingOutputs = (Array.isArray(data.pendingOutputs) ? data.pendingOutputs : []).map((item: unknown) => {
+    const output = item as Record<string, unknown>;
+    if (!output || typeof output.txid !== "string" || !/^[\da-f]{64}$/i.test(output.txid)
+      || !Number.isInteger(output.vout) || (output.vout as number) < 0) throw new Error("Invalid cached pending output");
+    return { txid: output.txid, vout: output.vout as number, valueGrains: amount(output.valueGrains) };
+  });
   const activities = data.activities.map((item: unknown) => {
     const activity = item as Record<string, unknown>;
     if (!activity || typeof activity.txid !== "string" || !/^[\da-f]{64}$/i.test(activity.txid)
@@ -32,7 +38,7 @@ function decodeEntry(raw: unknown): CachedSnapshot {
       || typeof activity.confirmations !== "number" || !Number.isFinite(activity.confirmations)) throw new Error("Invalid cached activity");
     return { txid: activity.txid, deltaGrains: amount(activity.deltaGrains), time: activity.time, confirmations: activity.confirmations };
   });
-  return { pool: entry.pool, data: { balanceGrains: amount(data.balanceGrains), pendingGrains: amount(data.pendingGrains ?? "0"), utxos, activities, partial: data.partial, updatedAt: data.updatedAt } };
+  return { pool: entry.pool, data: { balanceGrains: amount(data.balanceGrains), pendingGrains: amount(data.pendingGrains ?? "0"), pendingOutputs, utxos, activities, partial: data.partial, updatedAt: data.updatedAt } };
 }
 
 export function loadSnapshotCache(storage: Pick<Storage, "getItem"> = localStorage): SnapshotCache {
@@ -56,6 +62,7 @@ export function saveSnapshotCache(cache: SnapshotCache, storage: Pick<Storage, "
       ...entry.data,
       balanceGrains: entry.data.balanceGrains.toString(),
       pendingGrains: (entry.data.pendingGrains ?? 0n).toString(),
+      pendingOutputs: (entry.data.pendingOutputs ?? []).map((item) => ({ ...item, valueGrains: item.valueGrains.toString() })),
       utxos: entry.data.utxos.map((item) => ({ ...item, valueGrains: item.valueGrains.toString() })),
       activities: entry.data.activities.slice(0, 500).map((item) => ({ ...item, deltaGrains: item.deltaGrains.toString() })),
     },

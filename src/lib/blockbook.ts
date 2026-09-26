@@ -55,6 +55,7 @@ export async function scanWalletBlockbook(addresses: string[]): Promise<WalletSn
   if (!addresses.length || addresses.length > 20 || addresses.some((address) => !isValidPearlAddress(address))) throw new Error("钱包地址池无效");
   const owned = new Set(addresses);
   const utxos: WalletUtxo[] = [];
+  const pendingOutputs: { txid: string; vout: number; valueGrains: bigint }[] = [];
   const txs = new Map<string, BlockbookTx>();
   let balanceGrains = 0n;
   let pendingGrains = 0n;
@@ -71,7 +72,10 @@ export async function scanWalletBlockbook(addresses: string[]): Promise<WalletSn
         const valueGrains = grains(raw.value);
         if (valueGrains <= 0n) throw new Error("PearlResearch UTXO 金额无效");
         addressTotal += valueGrains;
-        if (raw.height === 0 || raw.confirmations === 0) pendingGrains += valueGrains;
+        if (raw.height === 0 || raw.confirmations === 0) {
+          pendingGrains += valueGrains;
+          pendingOutputs.push({ txid: raw.txid, vout: raw.vout, valueGrains });
+        }
         else utxos.push({ txid: raw.txid, vout: raw.vout, valueGrains, scriptHex: scriptForAddress(address), poolIndex: index });
       }
       balanceGrains += addressTotal;
@@ -104,5 +108,5 @@ export async function scanWalletBlockbook(addresses: string[]): Promise<WalletSn
     });
   }
   activities.sort((a, b) => Number(b.confirmations === 0) - Number(a.confirmations === 0) || b.time - a.time);
-  return { balanceGrains, pendingGrains, utxos, activities, partial, updatedAt: Date.now() };
+  return { balanceGrains, pendingGrains, pendingOutputs, utxos, activities, partial, updatedAt: Date.now() };
 }

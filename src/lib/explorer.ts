@@ -4,14 +4,15 @@ import { scriptForAddress } from "./send";
 import type { Activity, WalletSnapshot, WalletUtxo } from "./rpc";
 
 const BASE = "https://pearlchain.live/api/explorer";
+const BLOCKBOOK = "https://blockbook.pearlresearch.ai/api/v2";
 
-async function request<T>(path: string, body?: object): Promise<T> {
-  const url = BASE + path;
+async function requestUrl<T>(url: string, body?: object): Promise<T> {
+  const provider = url.startsWith(BLOCKBOOK) ? "PearlResearch" : "Pearlchain";
   if (Capacitor.isNativePlatform()) {
     const response = body
       ? await CapacitorHttp.post({ url, data: body, headers: { "Content-Type": "application/json" }, connectTimeout: 12_000, readTimeout: 12_000 })
       : await CapacitorHttp.get({ url, connectTimeout: 12_000, readTimeout: 12_000 });
-    if (response.status !== 200) throw new Error(`Pearlchain HTTP ${response.status}`);
+    if (response.status !== 200) throw new Error(`${provider} HTTP ${response.status}`);
     return (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as T;
   }
   const response = await fetch(url, {
@@ -20,8 +21,12 @@ async function request<T>(path: string, body?: object): Promise<T> {
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(12_000),
   });
-  if (!response.ok) throw new Error(`Pearlchain HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`${provider} HTTP ${response.status}`);
   return response.json() as Promise<T>;
+}
+
+function request<T>(path: string, body?: object): Promise<T> {
+  return requestUrl<T>(BASE + path, body);
 }
 
 export function grains(value: unknown): bigint {
@@ -64,12 +69,46 @@ type TransactionDetail = {
   vin: { address?: string; value?: string | number }[];
   vout: { address?: string; value: string | number }[];
 };
+type BlockbookPendingTx = { txid: string; confirmations: number; blockTime?: number;
+  vin: { addresses?: string[]; value?: string }[]; vout: { addresses?: string[]; value: string }[] };
+
+async function pendingOutgoingFromBlockbook(addresses: string[], walletAddresses: string[]): Promise<Activity[]> {
+  const txs = new Map<string, BlockbookPendingTx>();
+  for (let start = 0; start < addresses.length; start += 4) {
+    const results = await Promise.allSettled(addresses.slice(start, start + 4).map(async (address) => {
+      const basic = await requestUrl<{ unconfirmedTxs?: number }>(`${BLOCKBOOK}/address/${encodeURIComponent(address)}?details=basic`);
+      if (!Number.isInteger(basic.unconfirmedTxs) || !basic.unconfirmedTxs || basic.unconfirmedTxs < 0) return;
+      let found = 0;
+      for (let page = 1; page <= 20 && found < basic.unconfirmedTxs; page++) {
+        const history = await requestUrl<{ totalPages?: number; transactions?: BlockbookPendingTx[] }>(
+          `${BLOCKBOOK}/address/${encodeURIComponent(address)}?details=txs&page=${page}&pageSize=50`);
+        for (const tx of history.transactions ?? []) {
+          if (/^[\da-f]{64}$/i.test(tx.txid) && tx.confirmations === 0 && Array.isArray(tx.vin) && Array.isArray(tx.vout)) {
+            txs.set(tx.txid, tx);
+            found++;
+          }
+        }
+        if (!history.totalPages || page >= history.totalPages || !history.transactions?.length) break;
+      }
+    }));
+    for (const result of results) if (result.status === "rejected") {
+      console.warn("PearlResearch pending transfer lookup failed", result.reason instanceof Error ? result.reason.message : String(result.reason));
+    }
+  }
+  const owned = new Set(walletAddresses);
+  return Array.from(txs.values()).flatMap((tx): Activity[] => {
+    const received = tx.vout.reduce((sum, output) => sum + (output.addresses?.some((address) => owned.has(address)) ? grains(output.value) : 0n), 0n);
+    const sent = tx.vin.reduce((sum, input) => sum + (input.addresses?.some((address) => owned.has(address)) ? grains(input.value) : 0n), 0n);
+    return sent > received ? [{ txid: tx.txid, deltaGrains: received - sent, time: tx.blockTime ?? 0, confirmations: 0 }] : [];
+  });
+}
 
 export async function scanWalletExplorer(addresses: string[], probe?: ExplorerProbe): Promise<WalletSnapshot> {
   const current = probe ?? await probeWalletExplorer(addresses);
   if (current.pool !== addresses.join("|")) throw new Error("浏览器地址池不匹配");
   const byAddress = new Map(current.results.map((item) => [item.address, item]));
   const utxos: WalletUtxo[] = [];
+  const pendingOutputs: { txid: string; vout: number; valueGrains: bigint }[] = [];
   const pendingTxids = new Set<string>();
   let balanceGrains = 0n;
   let pendingGrains = 0n;
@@ -87,6 +126,7 @@ export async function scanWalletExplorer(addresses: string[], probe?: ExplorerPr
       addressBalance += valueGrains;
       if (raw.blockHeight === 0) {
         pendingGrains += valueGrains;
+        pendingOutputs.push({ txid: raw.txid, vout: raw.vout, valueGrains });
         pendingTxids.add(raw.txid);
       } else {
         utxos.push({ txid: raw.txid, vout: raw.vout, valueGrains, scriptHex, poolIndex: index });
@@ -134,9 +174,18 @@ export async function scanWalletExplorer(addresses: string[], probe?: ExplorerPr
       partial = true;
     }
   }
+  try {
+    const pendingAddresses = [...new Set([...used, addresses[0]!])];
+    for (const activity of await pendingOutgoingFromBlockbook(pendingAddresses, addresses)) {
+      const previous = deltas.get(activity.txid);
+      if (!previous || (previous.confirmations === 0 && previous.deltaGrains >= 0n)) deltas.set(activity.txid, activity);
+    }
+  } catch (failure) {
+    console.warn("PearlResearch pending transfer lookup failed", failure instanceof Error ? failure.message : String(failure));
+  }
   const activities = Array.from(deltas.values()).filter((item) => item.deltaGrains !== 0n)
     .sort((a, b) => Number(b.confirmations === 0) - Number(a.confirmations === 0) || b.time - a.time);
-  return { balanceGrains, pendingGrains, utxos, activities, partial, updatedAt: Date.now() };
+  return { balanceGrains, pendingGrains, pendingOutputs, utxos, activities, partial, updatedAt: Date.now() };
 }
 
 export async function broadcastViaExplorer(rawHex: string): Promise<string> {

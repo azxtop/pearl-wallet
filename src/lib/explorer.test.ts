@@ -66,8 +66,27 @@ describe("Pearlchain fallback", () => {
     const snapshot = await scanWalletExplorer([addresses[0]!]);
     expect(snapshot.balanceGrains).toBe(1000000n);
     expect(snapshot.pendingGrains).toBe(1000000n);
+    expect(snapshot.pendingOutputs).toEqual([{ txid, vout: 0, valueGrains: 1000000n }]);
     expect(snapshot.utxos).toHaveLength(0);
     expect(snapshot.activities).toMatchObject([{ txid, deltaGrains: 1000000n, confirmations: 0 }]);
     expect(snapshot.partial).toBe(false);
+  });
+
+  it("finds a pending outgoing transaction on PearlResearch after Pearlchain drops the spent UTXOs", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const body = url.endsWith("/scan")
+        ? { results: [{ address: addresses[0], used: true, balance: "0", utxos: [] }] }
+        : url.includes("pearlresearch.ai") && url.includes("details=basic")
+          ? { unconfirmedTxs: 1 }
+          : url.includes("pearlresearch.ai")
+            ? { transactions: [{ txid, confirmations: 0, blockTime: 123,
+              vin: [{ addresses: [addresses[0]], value: "3206833008" }],
+              vout: [{ addresses: [addresses[1]], value: "3206832723" }] }] }
+            : { txTotal: 0, transactions: [] };
+      return new Response(JSON.stringify(body), { status: 200 });
+    }));
+    const snapshot = await scanWalletExplorer([addresses[0]!]);
+    expect(snapshot.balanceGrains).toBe(0n);
+    expect(snapshot.activities).toMatchObject([{ txid, deltaGrains: -3206833008n, confirmations: 0 }]);
   });
 });

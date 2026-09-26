@@ -28,6 +28,7 @@ export interface Activity {
 export interface WalletSnapshot {
   balanceGrains: bigint;
   pendingGrains?: bigint;
+  pendingOutputs?: { txid: string; vout: number; valueGrains: bigint }[];
   utxos: WalletUtxo[];
   activities: Activity[];
   partial: boolean;
