@@ -45,3 +45,27 @@ export function candlesFromTrades(trades, startMinute, endMinute, previousClose 
   }
   return result;
 }
+
+/**
+ * 24h market stats for a list of trades inside the trailing window.
+ *
+ * `referencePrice` must be the last trade BEFORE the window (or null): the
+ * change percentage is measured against it so it always spans a full day.
+ * Using the first trade *inside* the window would silently shrink the window
+ * to minutes on low-volume pairs.
+ */
+export function stats24h(trades, referencePrice) {
+  const high = trades.reduce((value, trade) => Math.max(value, trade.price), -Infinity);
+  const low = trades.reduce((value, trade) => Math.min(value, trade.price), Infinity);
+  const volume = trades.reduce((sum, trade) => sum + trade.amount, 0);
+  const turnover = trades.reduce((sum, trade) => sum + trade.amount * trade.price, 0);
+  const last = trades.at(-1)?.price;
+  const changePercent = referencePrice && last ? (last / referencePrice - 1) * 100 : null;
+  return {
+    high: Number.isFinite(high) ? high : null,
+    low: Number.isFinite(low) ? low : null,
+    volume,
+    turnover,
+    changePercent,
+  };
+}

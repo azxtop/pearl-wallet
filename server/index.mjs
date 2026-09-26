@@ -3,7 +3,7 @@ import { readFileSync, mkdirSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { resolve } from 'node:path';
-import { candlesFromTrades, normalizeTrade } from './market.mjs';
+import { candlesFromTrades, normalizeTrade, stats24h } from './market.mjs';
 
 const HOST = process.env.PEARL_SERVER_HOST || '127.0.0.1';
 const PORT = Number(process.env.PEARL_SERVER_PORT || 8787);
@@ -161,7 +161,8 @@ const server = http.createServer((request, response) => {
     return;
   }
   const readToken = process.env.PEARL_READ_TOKEN;
-  if (readToken && request.headers.authorization !== `Bearer ${readToken}`) {
+  // Fail closed: a missing PEARL_READ_TOKEN must never silently disable auth.
+  if (!readToken || request.headers.authorization !== `Bearer ${readToken}`) {
     response.statusCode = 401;
     response.end(JSON.stringify({ error: 'Unauthorized' }));
     return;
@@ -178,20 +179,18 @@ const server = http.createServer((request, response) => {
   const rows = latestTrades.all(start);
   const previousClose = priorTrade.get(start)?.price ?? null;
   const candles = candlesFromTrades(rows, start, end, previousClose, seconds);
-  const last24h = latestTrades.all(Math.floor(Date.now() / 1000) - 86_400);
-  const high24h = last24h.reduce((value, trade) => Math.max(value, trade.price), -Infinity);
-  const low24h = last24h.reduce((value, trade) => Math.min(value, trade.price), Infinity);
-  const volume24h = last24h.reduce((sum, trade) => sum + trade.amount, 0);
-  const turnover24h = last24h.reduce((sum, trade) => sum + trade.amount * trade.price, 0);
-  const first24h = last24h[0]?.price;
-  const last24hPrice = last24h.at(-1)?.price;
-  const change24h = first24h && last24hPrice ? (last24hPrice / first24h - 1) * 100 : null;
+  const windowStart = Math.floor(Date.now() / 1000) - 86_400;
+  const last24h = latestTrades.all(windowStart);
+  // The 24h change must be measured against the last trade BEFORE the window, not the
+  // first trade inside it, so the percentage always spans a full day on low-volume pairs.
+  const referencePrice = priorTrade.get(windowStart)?.price ?? last24h[0]?.price ?? null;
+  const stats = stats24h(last24h, referencePrice);
   response.end(JSON.stringify({
     pair: 'PRL/USDT',
     interval,
     price: rows.at(-1)?.price ?? previousClose,
     candles,
-    stats24h: { high: Number.isFinite(high24h) ? high24h : null, low: Number.isFinite(low24h) ? low24h : null, volume: volume24h, turnover: turnover24h, changePercent: change24h },
+    stats24h: stats,
     balances: state.balances,
     lastTradeAt: state.lastTradeAt,
     accountUpdatedAt: state.accountUpdatedAt,

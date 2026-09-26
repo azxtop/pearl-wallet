@@ -1,3 +1,5 @@
+import { isValidPearlAddress } from "./pearl";
+
 export interface EncryptedWallet {
   version: 2;
   address: string;
@@ -37,7 +39,9 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
 
 export async function encryptMnemonic(mnemonic: string, password: string, address: string): Promise<EncryptedWallet> {
   if (password.length < 12) throw new Error("密码至少需要 12 个字符");
-  if (!address.startsWith("prl1p")) throw new Error("钱包地址无效");
+  // The address is bound into the AES-GCM associated data; validate it fully so a
+  // malformed string can never be silently bound into a wallet blob.
+  if (!isValidPearlAddress(address)) throw new Error("钱包地址无效");
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(password, salt);

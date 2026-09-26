@@ -82,11 +82,18 @@ describe("locally broadcast transactions", () => {
     expect(loadPendingOutgoing(storage)).toEqual([pending]);
   });
 
-  it("stops estimating an unresolved transfer after 48 hours", () => {
+  it("releases the inputs of an unresolved transfer after 48 hours so they can be spent again", () => {
     const view = projectWalletSnapshot(base, [pending], now + 49 * 60 * 60 * 1000);
     expect(view.balanceGrains).toBe(1000n);
     expect(view.estimated).toBe(false);
-    expect(view.availableUtxos).toEqual([]);
+    expect(view.availableUtxos).toEqual([coin]);
     expect(view.staleTxids.has(sentTxid)).toBe(true);
+    expect(view.activities).toMatchObject([{ txid: sentTxid, deltaGrains: -110n, confirmations: 0 }]);
+  });
+
+  it("still locks the inputs of a fresh unconfirmed transfer", () => {
+    const view = projectWalletSnapshot(base, [pending], now + 60 * 60 * 1000);
+    expect(view.availableUtxos).toEqual([]);
+    expect(view.estimated).toBe(true);
   });
 });
