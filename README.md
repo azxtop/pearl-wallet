@@ -48,6 +48,10 @@ APK 位于 `releases/`。`PearlWallet-0.2.9-debug.apk` 可覆盖此前安装的 
 
 更新检查优先读取 GitHub 仓库的 `server/update.json`，失败时读取现有 HTTPS 服务器。新版 App 优先下载 GitHub Release 的正式签名 APK，失败时下载服务器副本。`apkUrl` 保留服务器地址供 0.2.8 及更早版本升级；`githubApkUrl` 提供新版的首选地址。两份 APK 必须具有相同的 SHA-256。
 
+## 官网
+
+`site/index.html` 是无需构建的静态介绍页，部署在 `https://pearlwallet.az1993.xyz/`。页面的 APK 下载按钮直连 GitHub Release；发布新版本时同步更新页面中的版本号、下载链接及 SHA-256。Nginx 配置只为根路径增加静态页面，保留 `/api/update` 与 `/releases/` 作为 App 更新的备用来源。
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
