@@ -43,3 +43,7 @@ APK 位于 `releases/`。`PearlWallet-0.2.8-debug.apk` 可覆盖此前安装的 
 ## 已知限制
 
 无法保证钱包“100% 安全”。签名测试使用模拟 UTXO，没有广播真实主网转账。链上余额依赖 `pearlchain.live`，失败时依赖 PearlResearch Blockbook，不是本机完整节点验证；前 20 个地址以外的资产目前不会自动发现。观察模式只读，但所查询的地址会发送给当前使用的浏览器。不要在完成实机小额转账与独立安全审计前存入有价值的资产。
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
