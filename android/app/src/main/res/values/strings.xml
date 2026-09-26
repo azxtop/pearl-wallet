@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Pearl Wallet</string>
+    <string name="title_activity_main">Pearl Wallet</string>
+    <string name="package_name">ai.pearl.localwallet</string>
+    <string name="custom_url_scheme">ai.pearl.localwallet</string>
+</resources>

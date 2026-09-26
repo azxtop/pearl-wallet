@@ -1,0 +1,22 @@
+services:
+  pearlwallet-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    user: "1000:1000"
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    ports:
+      - "127.0.0.1:8788:8787"
+    environment:
+      PEARL_READ_TOKEN: ${PEARL_READ_TOKEN}
+    volumes:
+      - ../server/data:/data
+      - ../private/safetrade.txt:/run/secrets/safetrade.txt:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
