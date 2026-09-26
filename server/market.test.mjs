@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { candlesFromTrades, normalizeTrade } from './market.mjs';
+import { candlesFromTrades, normalizeTrade, stats24h } from './market.mjs';
 
 test('builds one-minute OHLCV and marks minutes with no trade', () => {
   const trades = [
@@ -32,4 +32,29 @@ test('groups trades into selected chart intervals', () => {
   assert.equal(candles[0].volume, 5);
   assert.equal(candles[1].open, 1.1);
   assert.equal(candles[2].empty, true);
+});
+
+test('measures the 24h change against the last trade before the window', () => {
+  // Low-volume pair: only two trades in the last 24h, minutes apart. The change
+  // must span the full day (vs the last trade before the window), not minutes
+  // (vs the first trade inside the window).
+  const trades = [
+    { id: 'a', ts: 100_000, price: 1.0, amount: 2 },
+    { id: 'b', ts: 100_600, price: 1.5, amount: 4 },
+  ];
+  const stats = stats24h(trades, 1.2);
+  assert.equal(stats.high, 1.5);
+  assert.equal(stats.low, 1.0);
+  assert.equal(stats.volume, 6);
+  assert.equal(stats.turnover, 2 * 1.0 + 4 * 1.5);
+  assert.equal(stats.changePercent, (1.5 / 1.2 - 1) * 100);
+});
+
+test('returns null change and stats when there are no trades', () => {
+  const stats = stats24h([], null);
+  assert.equal(stats.high, null);
+  assert.equal(stats.low, null);
+  assert.equal(stats.volume, 0);
+  assert.equal(stats.changePercent, null);
+  assert.equal(stats24h([{ id: 'a', ts: 1, price: 2, amount: 1 }], null).changePercent, null);
 });

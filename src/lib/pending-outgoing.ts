@@ -104,11 +104,13 @@ export function projectWalletSnapshot(snapshot: WalletSnapshot, records: Pending
     if (!visible.has(record.txid.toLowerCase())) visible.set(record.txid.toLowerCase(), {
       txid: record.txid, deltaGrains, time: Math.floor(record.createdAt / 1000), confirmations: 0,
     });
+    // A broadcast that never confirms (dropped from the mempool, never relayed) must not
+    // lock its inputs forever: once the record goes stale, its inputs become spendable again.
+    if (now - record.createdAt > ACTIVE_MS) { staleTxids.add(record.txid.toLowerCase()); continue; }
     for (const input of record.inputs) {
       const key = `${input.txid.toLowerCase()}:${input.vout}`;
       spent.add(key);
     }
-    if (now - record.createdAt > ACTIVE_MS) { staleTxids.add(record.txid.toLowerCase()); continue; }
     estimated = true;
     for (const input of record.inputs) {
       const key = `${input.txid.toLowerCase()}:${input.vout}`;
