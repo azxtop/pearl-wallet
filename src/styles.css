@@ -69,6 +69,11 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .segmented { background: #e8ebf0; padding: 4px; display: flex; border-radius: 13px; margin: 28px 0 18px; }
 .segmented button { flex: 1; border: 0; background: transparent; color: #6a7688; padding: 12px 5px; border-radius: 10px; font-size: 14px; }
 .segmented button.active { background: #fff; color: #111827; box-shadow: 0 1px 4px #00000012; font-weight: 650; }
+.onboarding-warning { display: flex; gap: 11px; margin: 0 0 16px; padding: 15px; border: 1px solid #e8d4a2; border-radius: 14px; background: #fff8e8; color: #765521; text-align: left; }
+.onboarding-warning svg { flex: none; margin-top: 1px; }
+.onboarding-warning strong { font-size: 14px; }
+.onboarding-warning p { margin: 7px 0 9px; font-size: 13px; line-height: 1.6; }
+.onboarding-warning button { padding: 0; border: 0; background: none; color: #694913; font-size: 13px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 .form-card, .settings-card, .chart-card, .receive-card { background: #fff; border: 1px solid #e1e5eb; border-radius: 18px; padding: 20px; box-shadow: 0 2px 3px #10182708; }
 .field { display: block; margin-bottom: 18px; }
 .field span { display: block; margin-bottom: 8px; font-size: 13px; color: #546173; font-weight: 600; }

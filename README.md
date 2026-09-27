@@ -1,8 +1,10 @@
-# Pearl Wallet 0.2.24
+# Pearl Wallet 0.2.25
 
 **官方网站：** https://pearlwallet.az1993.xyz/ · **Android 下载：** https://github.com/azxtop/pearl-wallet/releases
 
 **PRL 捐赠地址：** `prl1pm2u7jht5vqqw32k5e2m87dpwhavwwrjnd6d7tjtpsv3l8qzzgdds8d449j`
+
+当前支持助记词导入，尚不支持单独私钥导入。应用未经独立安全审计；只需查看余额与交易时，建议使用观察地址。
 
 Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；Market 可切换 SafeTrade PRL/USDT 与以太坊 Uniswap V3 WPRL/USDT，SafeTrade 还可只读展示 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
 
@@ -30,7 +32,7 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.24-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.24-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.25-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.25-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 

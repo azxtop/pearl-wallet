@@ -24,7 +24,7 @@ type Tab = "wallet" | "market" | "setting";
 type MarketSource = "safetrade" | "wprl";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.24";
+const APP_VERSION = "0.2.25";
 const PROJECT_URL = "https://pearlwallet.az1993.xyz/";
 const SOURCE_URL = "https://github.com/azxtop/pearl-wallet";
 const CONTACT_EMAIL = "az1993515909@gmail.com";
@@ -1255,7 +1255,8 @@ export default function App() {
       {tab === "wallet" && (!activeProfile || addingProfile) && <section className="onboarding">
         {addingProfile && <button className="back" aria-label="取消添加钱包" onClick={() => { setAddingProfile(false); setWalletName(""); setPassword(""); setInputMnemonic(""); setAddresses(activeProfile?.kind === "watch" ? [activeProfile.address] : !requireUnlock && activeProfile?.kind === "wallet" && activeProfile.addresses.length ? activeProfile.addresses : null); setAutoFingerAttempted(false); }}><Icon name="back" /></button>}
         <img className="brand-logo" src="/pearl-logo.svg" alt="Pearl" /><h1>Pearl Wallet</h1>
-        <div className="segmented"><button className={setupMode === "create" ? "active" : ""} onClick={() => setSetupMode("create")}>创建钱包</button><button className={setupMode === "restore" ? "active" : ""} onClick={() => setSetupMode("restore")}>导入钱包</button><button className={setupMode === "watch" ? "active" : ""} onClick={() => setSetupMode("watch")}>观察地址</button></div>
+        <div className="segmented"><button className={setupMode === "create" ? "active" : ""} onClick={() => { setSetupMode("create"); setInputMnemonic(""); }}>创建钱包</button><button className={setupMode === "restore" ? "active" : ""} onClick={() => setSetupMode("restore")}>导入钱包</button><button className={setupMode === "watch" ? "active" : ""} onClick={() => { setSetupMode("watch"); setInputMnemonic(""); }}>观察地址</button></div>
+        {setupMode !== "watch" && <div className="onboarding-warning" role="alert"><Icon name="shield" size={20} /><div><strong>密钥安全提示</strong><p>此应用尚未经过独立安全审计，助记词和私钥的安全性无法保证。只需查看余额与交易时，建议使用观察地址，无需提供密钥。</p><button type="button" onClick={() => { setSetupMode("watch"); setInputMnemonic(""); }}>使用观察地址 →</button></div></div>}
         <form onSubmit={createOrRestore} className="form-card">
           <Field label="钱包名称" value={walletName} onChange={setWalletName} placeholder={setupMode === "watch" ? "例如：观察地址" : "例如：主钱包"} autoComplete="off" />
           {setupMode === "restore" && <label className="field"><span>助记词</span><textarea value={inputMnemonic} onChange={(event) => setInputMnemonic(event.target.value)} rows={4} placeholder="输入 12 或 24 个英文单词" spellCheck={false} autoComplete="off" /></label>}
