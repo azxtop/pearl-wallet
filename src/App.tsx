@@ -23,7 +23,7 @@ import { screenPrivacy } from "./lib/screen-privacy";
 type Tab = "wallet" | "safetrade" | "setting";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.18";
+const APP_VERSION = "0.2.19";
 type Interval = MarketInterval;
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
@@ -59,7 +59,7 @@ function Field({ label, value, onChange, type = "text", placeholder, autoComplet
   return <label className="field"><span>{label}</span><input value={value} onChange={(event) => onChange(event.target.value)} type={type} placeholder={placeholder} autoComplete={autoComplete} /></label>;
 }
 
-function CandleChart({ candles, loading = false, status = "" }: { candles: MarketData["candles"]; loading?: boolean; status?: string }) {
+function CandleChart({ candles, currentPrice, loading = false, status = "" }: { candles: MarketData["candles"]; currentPrice?: number | null; loading?: boolean; status?: string }) {
   const [visibleCount, setVisibleCount] = useState(80);
   const [offset, setOffset] = useState(0);
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
@@ -78,10 +78,16 @@ function CandleChart({ candles, loading = false, status = "" }: { candles: Marke
   const real = data.filter((item) => Number.isFinite(item.high) && Number.isFinite(item.low));
   if (!real.length) return <div className="chart-empty">{loading ? "正在加载 K 线…" : "暂无成交数据"}</div>;
   const selected = selectedTime === null ? null : data.find((item) => item.time === selectedTime);
-  const high = Math.max(...real.map((item) => item.high));
-  const low = Math.min(...real.map((item) => item.low));
+  const latestPrice = viewport.endIndex === candles.length
+    ? typeof currentPrice === "number" && Number.isFinite(currentPrice) ? currentPrice : candles.at(-1)?.close
+    : undefined;
+  const latestCandle = candles.at(-1);
+  const latestUp = latestCandle ? (latestPrice ?? latestCandle.close) >= latestCandle.open : true;
+  const high = Math.max(...real.map((item) => item.high), ...(latestPrice === undefined ? [] : [latestPrice]));
+  const low = Math.min(...real.map((item) => item.low), ...(latestPrice === undefined ? [] : [latestPrice]));
   const span = Math.max(high - low, high * 0.003);
   const y = (value: number) => 240 - ((value - low) / span) * 210;
+  const latestY = latestPrice === undefined ? null : y(latestPrice);
   const maxVolume = Math.max(1, ...data.map((item) => item.volume));
   const chartWidth = 640;
   const width = chartWidth / visibleCount;
@@ -186,10 +192,12 @@ function CandleChart({ candles, loading = false, status = "" }: { candles: Marke
         </g>;
       })}
       <path d={maPath(7)} className="ma-line ma7" /><path d={maPath(25)} className="ma-line ma25" /><path d={maPath(99)} className="ma-line ma99" />
+      {latestY !== null && <line x1="0" x2="640" y1={latestY} y2={latestY} className={`chart-current-line ${latestUp ? "up" : "down"}`} />}
       {selected && <g className="chart-crosshair"><line x1={selectedX} x2={selectedX} y1="0" y2="355" /><line x1="0" x2="640" y1={selectedY ?? y(selected.close)} y2={selectedY ?? y(selected.close)} /><circle cx={selectedX} cy={selectedY ?? y(selected.close)} r="3" /></g>}
       <rect x="0" y="0" width="640" height="355" fill="transparent" pointerEvents="all" />
     </svg>
-    {[0, 1, 2, 3, 4].map((line) => <span key={line} className="chart-price-label" style={{ top: `${(26 + line * 52) / 355 * 100}%` }}>{(low + span * (240 - (30 + line * 52)) / 210).toFixed(4)}</span>)}
+    {[0, 1, 2, 3, 4].filter((line) => latestY === null || Math.abs(latestY - (30 + line * 52)) > 13).map((line) => <span key={line} className="chart-price-label" style={{ top: `${(26 + line * 52) / 355 * 100}%` }}>{(low + span * (240 - (30 + line * 52)) / 210).toFixed(4)}</span>)}
+    {latestY !== null && <span className={`chart-current-price ${latestUp ? "up" : "down"}`} style={{ top: `${latestY / 355 * 100}%` }} aria-label={`当前价格 ${marketNumber(latestPrice, 8)} USDT`}>{marketNumber(latestPrice, 8)}</span>}
     {gridTimes.filter(({ candle }) => candle).map(({ x, candle }) => <span key={x} className="chart-time-label" style={{ left: `${x / 640 * 100}%` }}>{timeLabel(candle!.time)}</span>)}
     {selected && <div className={`chart-detail-popup ${selectedX > 320 ? "on-left" : "on-right"}`}><div>时间 <strong>{timeLabel(selected.time)}</strong></div><div>开 <strong>{marketNumber(selected.open, 8)}</strong></div><div>高 <strong>{marketNumber(selected.high, 8)}</strong></div><div>低 <strong>{marketNumber(selected.low, 8)}</strong></div><div>收 <strong>{marketNumber(selected.close, 8)}</strong></div><div>涨跌 <strong className={selected.close >= selected.open ? "positive" : "negative"}>{marketNumber(selected.close - selected.open, 8)}</strong></div><div>量 <strong>{compactMarketNumber(selected.volume)} PRL</strong></div></div>}
     </div>
@@ -1142,7 +1150,7 @@ export default function App() {
         <div className="pair-head"><div><h1>PRL/USDT</h1><small>SafeTrade 现货</small></div><button className="market-refresh" aria-label="刷新行情" onClick={refreshExchange}><Icon name="refresh" size={19} /></button></div>
         <div className="market-summary"><div className="market-last"><strong className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{marketNumber(exchange?.price, 8)}</strong><span>USDT <em className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{exchange?.stats24h?.changePercent == null ? "" : `${exchange.stats24h.changePercent >= 0 ? "+" : ""}${exchange.stats24h.changePercent.toFixed(2)}%`}</em></span></div><div className="market-stats"><div><span>24h 最高</span><strong>{marketNumber(exchange?.stats24h?.high, 8)}</strong></div><div><span>24h 最低</span><strong>{marketNumber(exchange?.stats24h?.low, 8)}</strong></div><div><span>24h 成交量</span><strong>{compactMarketNumber(exchange?.stats24h?.volume)} PRL</strong></div><div><span>24h 成交额</span><strong>{compactMarketNumber(exchange?.stats24h?.turnover)} USDT</strong></div></div></div>
         <div className="intervals">{INTERVALS.map((option) => <button key={option.id} className={interval === option.id ? "active" : ""} onClick={() => setIntervalValue(option.id)}>{option.label}</button>)}</div>
-        <div className="chart-card"><CandleChart key={interval} candles={currentSeries?.candles ?? []} loading={marketRefreshing} status={currentSeries && Date.now() - currentSeries.updatedAt > 15_000 ? marketRefreshing ? "正在同步" : `更新于 ${new Date(currentSeries.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""} /></div>
+        <div className="chart-card"><CandleChart key={interval} candles={currentSeries?.candles ?? []} currentPrice={exchange?.price} loading={marketRefreshing} status={currentSeries && Date.now() - currentSeries.updatedAt > 15_000 ? marketRefreshing ? "正在同步" : `更新于 ${new Date(currentSeries.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""} /></div>
         {exchangeError && <div className="inline-error">{exchangeError}<button onClick={refreshExchange}>重试</button></div>}
         {exchange?.marketError && <div className="inline-error">{exchange.marketError}</div>}
         <div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button></div>
