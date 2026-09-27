@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import WebSocket from 'ws';
 
 test('public market never includes account data; connection token gates balances and can be revoked', async () => {
   const key = 'test-readonly-key';
@@ -30,7 +31,7 @@ test('public market never includes account data; connection token gates balances
   const dataDir = mkdtempSync(join(tmpdir(), 'pearl-safetrade-test-'));
   const child = spawn(process.execPath, ['server/index.mjs'], {
     cwd: process.cwd(),
-    env: { ...process.env, PEARL_SERVER_PORT: '0', PEARL_DATA_DIR: dataDir, PEARL_CREDENTIAL_KEY: randomBytes(32).toString('base64'), SAFETRADE_API_BASE: `http://127.0.0.1:${upstream.address().port}` },
+    env: { ...process.env, PEARL_SERVER_PORT: '0', PEARL_DATA_DIR: dataDir, PEARL_CREDENTIAL_KEY: randomBytes(32).toString('base64'), SAFETRADE_API_BASE: `http://127.0.0.1:${upstream.address().port}`, SAFETRADE_WS_DISABLED: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {
@@ -60,6 +61,16 @@ test('public market never includes account data; connection token gates balances
     assert.equal('depth' in series, false);
     assert.equal((await fetch(`${base}/candles?interval=bad`)).status, 400);
     assert.equal((await fetch(`${base}/account`)).status, 401);
+    assert.equal((await fetch(`${base}/account-stream-ticket`, { method: 'POST' })).status, 401);
+    const publicStream = new WebSocket(`ws://127.0.0.1:${port}/api/safetrade/stream`);
+    const publicFrame = await new Promise((resolve, reject) => {
+      publicStream.once('message', (message) => resolve(JSON.parse(String(message))));
+      publicStream.once('error', reject);
+    });
+    assert.equal(publicFrame.type, 'overview');
+    assert.equal(publicFrame.data.price, 1.5);
+    assert.equal('balances' in publicFrame.data, false);
+    publicStream.close();
     const connected = await fetch(`${base}/connection`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, secret }) });
     assert.equal(connected.status, 201);
     const { token } = await connected.json();
@@ -67,6 +78,17 @@ test('public market never includes account data; connection token gates balances
     const account = await (await fetch(`${base}/account`, { headers })).json();
     assert.deepEqual(account.balances.PRL, { available: '12', locked: '1' });
     assert.equal('BTC' in account.balances, false);
+    const ticketResponse = await fetch(`${base}/account-stream-ticket`, { method: 'POST', headers });
+    assert.equal(ticketResponse.status, 200);
+    const { ticket } = await ticketResponse.json();
+    const accountStream = new WebSocket(`ws://127.0.0.1:${port}/api/safetrade/account-stream`, ['pearl-v1', `ticket.${ticket}`]);
+    const accountFrame = await new Promise((resolve, reject) => {
+      accountStream.once('message', (message) => resolve(JSON.parse(String(message))));
+      accountStream.once('error', reject);
+    });
+    assert.equal(accountFrame.type, 'account');
+    assert.deepEqual(accountFrame.data.balances.USDT, { available: '3', locked: '0' });
+    accountStream.close();
     assert.equal((await fetch(`${base}/account`, { method: 'DELETE', headers })).status, 200);
     assert.equal((await fetch(`${base}/account`, { headers })).status, 401);
   } finally {

@@ -15,7 +15,7 @@ import { broadcastPearlTx } from "./lib/rpc";
 import { prepareSend, type SendPreview } from "./lib/send";
 import type { EncryptedWallet } from "./lib/keystore";
 import { BIOMETRIC_ADDRESS_KEY, loadProfiles, profileName, saveProfiles, type ProfileStore, type WalletProfile } from "./lib/profiles";
-import { clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadMarketCandles, loadMarketOverview, savedConnectionToken, saveConnectionToken, type AccountData, type MarketData } from "./lib/safetrade";
+import { accountStreamTicket, clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadMarketCandles, loadMarketOverview, openAccountStream, openMarketStream, savedConnectionToken, saveConnectionToken, type AccountData, type MarketData, type MarketStreamFrame } from "./lib/safetrade";
 import { chartWindow } from "./lib/chart-window";
 import { loadPublicMarketCache, MARKET_INTERVALS, savePublicMarketCache, type MarketInterval } from "./lib/market-cache";
 import { screenPrivacy } from "./lib/screen-privacy";
@@ -23,7 +23,7 @@ import { screenPrivacy } from "./lib/screen-privacy";
 type Tab = "wallet" | "safetrade" | "setting";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.17";
+const APP_VERSION = "0.2.18";
 type Interval = MarketInterval;
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
@@ -258,6 +258,11 @@ export default function App() {
   activeInterval.current = interval;
   const overviewRequest = useRef<Promise<void> | null>(null);
   const candleRequests = useRef(new Map<Interval, Promise<void>>());
+  const marketStreamActive = useRef(false);
+  const marketSocket = useRef<WebSocket | null>(null);
+  const accountStreamActive = useRef(false);
+  const lastOverviewReconcile = useRef(0);
+  const lastCandleReconcile = useRef(0);
   const currentSeries = publicMarket.series[interval];
   const overview = publicMarket.overview;
   const exchangeError = candleError || overviewError;
@@ -403,8 +408,18 @@ export default function App() {
     const started = performance.now();
     const pending = loadMarketCandles(target).then((series) => {
       if (series.interval !== target) throw new Error("K 线周期不匹配");
-      setPublicMarket((previous) => !previous.series[target] || series.updatedAt > previous.series[target]!.updatedAt
-        ? { ...previous, series: { ...previous.series, [target]: series } } : previous);
+      setPublicMarket((previous) => {
+        const current = previous.series[target];
+        if (!current || series.updatedAt > current.updatedAt || (series.candles.at(-1)?.time ?? 0) > (current.candles.at(-1)?.time ?? 0)) {
+          return { ...previous, series: { ...previous.series, [target]: series } };
+        }
+        const fetched = series.candles.at(-1);
+        const latest = current.candles.at(-1);
+        if (!fetched || !latest || fetched.time !== latest.time || fetched.volume <= latest.volume) return previous;
+        const candles = current.candles.slice();
+        candles[candles.length - 1] = { ...latest, volume: fetched.volume };
+        return { ...previous, series: { ...previous.series, [target]: { ...current, candles } } };
+      });
       if (target === activeInterval.current) setCandleError("");
       console.debug(`SafeTrade ${target} candles ${Math.round(performance.now() - started)}ms`);
     }).catch(() => { if (target === activeInterval.current) setCandleError("K 线暂不可用"); })
@@ -424,7 +439,8 @@ export default function App() {
   const refreshSafeTradeAccount = useCallback(async () => {
     if (!connectionToken) return;
     try {
-      setAccount(await loadAccount(connectionToken));
+      const latest = await loadAccount(connectionToken);
+      setAccount((previous) => !previous || latest.updatedAt >= previous.updatedAt ? latest : previous);
       setAccountError("");
     } catch (cause) {
       setAccountError(cause instanceof Error ? cause.message : "账户余额暂不可用");
@@ -524,8 +540,102 @@ export default function App() {
 
   useEffect(() => {
     if (tab !== "safetrade") return;
+    let socket: WebSocket | null = null;
+    let reconnect: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    let retryMs = 1000;
+    const close = () => {
+      marketStreamActive.current = false;
+      if (reconnect) clearTimeout(reconnect);
+      reconnect = null;
+      socket?.close();
+      socket = null;
+      marketSocket.current = null;
+    };
+    const connect = () => {
+      if (stopped || document.hidden || socket) return;
+      const current = openMarketStream();
+      socket = current;
+      current.onopen = () => {
+        if (socket !== current) return;
+        marketStreamActive.current = true;
+        marketSocket.current = current;
+        current.send(JSON.stringify({ type: "subscribe", interval: activeInterval.current }));
+        retryMs = 1000;
+        void refreshOverview();
+        void refreshCandles(activeInterval.current, false);
+      };
+      current.onmessage = ({ data }) => {
+        let frame: MarketStreamFrame;
+        try { frame = JSON.parse(String(data)) as MarketStreamFrame; } catch { return; }
+        if (frame.type === "overview" && frame.data?.pair === "PRL/USDT" && Number.isFinite(frame.data.updatedAt)) {
+          setPublicMarket((previous) => !previous.overview || frame.data.updatedAt > previous.overview.updatedAt
+            ? { ...previous, overview: frame.data } : previous);
+          setOverviewError("");
+        }
+        if (frame.type === "overview-patch" && Number.isFinite(frame.data?.updatedAt)) {
+          setPublicMarket((previous) => {
+            const overview = previous.overview;
+            if (!overview || frame.data.updatedAt <= overview.updatedAt) return previous;
+            return { ...previous, overview: { ...overview, ...frame.data } };
+          });
+          setOverviewError("");
+        }
+        if (frame.type === "candle" && MARKET_INTERVALS.includes(frame.interval as Interval)
+          && Number.isFinite(frame.candle?.time) && Number.isFinite(frame.candle?.close)) {
+          const target = frame.interval as Interval;
+          setPublicMarket((previous) => {
+            const series = previous.series[target];
+            if (!series?.candles.length || frame.updatedAt <= series.updatedAt) return previous;
+            const candles = series.candles.slice();
+            const last = candles.at(-1)!;
+            if (frame.candle.time < last.time) return previous;
+            const candle = frame.candle.time === last.time
+              ? { ...frame.candle, volume: Math.max(last.volume, frame.candle.volume) } : frame.candle;
+            if (frame.candle.time === last.time) candles[candles.length - 1] = candle;
+            else { candles.push(candle); if (candles.length > 300) candles.shift(); }
+            return { ...previous, series: { ...previous.series, [target]: { ...series, candles, updatedAt: frame.updatedAt } } };
+          });
+          if (target === activeInterval.current) setCandleError("");
+        }
+      };
+      current.onerror = () => current.close();
+      current.onclose = () => {
+        if (socket !== current) return;
+        socket = null;
+        marketSocket.current = null;
+        marketStreamActive.current = false;
+        if (stopped || document.hidden) return;
+        void refreshOverview();
+        void refreshCandles(activeInterval.current, false);
+        reconnect = setTimeout(connect, retryMs);
+        retryMs = Math.min(retryMs * 2, 30_000);
+      };
+    };
+    const onVisibility = () => {
+      if (document.hidden) close();
+      else { void refreshOverview(); void refreshCandles(activeInterval.current, false); connect(); }
+    };
+    connect();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { stopped = true; close(); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [tab, refreshOverview, refreshCandles]);
+
+  useEffect(() => {
+    const socket = marketSocket.current;
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "subscribe", interval }));
+  }, [interval]);
+
+  useEffect(() => {
+    if (tab !== "safetrade") return;
     void refreshOverview();
-    const timer = setInterval(() => { if (!document.hidden) void refreshOverview(); }, 5_000);
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      if (!marketStreamActive.current || Date.now() - lastOverviewReconcile.current > 60_000) {
+        lastOverviewReconcile.current = Date.now();
+        void refreshOverview();
+      }
+    }, 5_000);
     return () => clearInterval(timer);
   }, [tab, refreshOverview]);
 
@@ -533,7 +643,13 @@ export default function App() {
     if (tab !== "safetrade") return;
     setCandleError("");
     void refreshCandles(interval);
-    const timer = setInterval(() => { if (!document.hidden) void refreshCandles(interval, false); }, 5_000);
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      if (!marketStreamActive.current || Date.now() - lastCandleReconcile.current > 15_000) {
+        lastCandleReconcile.current = Date.now();
+        void refreshCandles(interval, false);
+      }
+    }, 5_000);
     return () => clearInterval(timer);
   }, [tab, interval, refreshCandles]);
 
@@ -554,9 +670,72 @@ export default function App() {
 
   useEffect(() => {
     if (tab !== "safetrade" || !connectionToken) return;
-    refreshSafeTradeAccount();
-    const timer = setInterval(refreshSafeTradeAccount, 30_000);
-    return () => clearInterval(timer);
+    let socket: WebSocket | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    let generation = 0;
+    let retryMs = 1000;
+    let lastRestCheck = 0;
+    const close = () => {
+      generation++;
+      accountStreamActive.current = false;
+      if (retry) clearTimeout(retry);
+      retry = null;
+      socket?.close();
+      socket = null;
+    };
+    const scheduleRetry = () => {
+      if (stopped || document.hidden) return;
+      retry = setTimeout(() => void connect(), retryMs);
+      retryMs = Math.min(retryMs * 2, 30_000);
+    };
+    const connect = async () => {
+      if (stopped || document.hidden || socket) return;
+      const attempt = ++generation;
+      let ticket: string;
+      try { ({ ticket } = await accountStreamTicket(connectionToken)); }
+      catch { scheduleRetry(); return; }
+      if (stopped || document.hidden || attempt !== generation) return;
+      const current = openAccountStream(ticket);
+      socket = current;
+      current.onopen = () => {
+        if (socket !== current) return;
+        accountStreamActive.current = true;
+        retryMs = 1000;
+      };
+      current.onmessage = ({ data }) => {
+        let frame: { type: string; data?: AccountData };
+        try { frame = JSON.parse(String(data)) as typeof frame; } catch { return; }
+        if (frame.type !== "account" || !frame.data?.balances?.PRL || !frame.data.balances.USDT) return;
+        setAccount((previous) => !previous || frame.data!.updatedAt >= previous.updatedAt ? frame.data! : previous);
+        setAccountError("");
+      };
+      current.onerror = () => current.close();
+      current.onclose = () => {
+        if (socket !== current) return;
+        socket = null;
+        accountStreamActive.current = false;
+        void refreshSafeTradeAccount();
+        scheduleRetry();
+      };
+    };
+    const onVisibility = () => {
+      if (document.hidden) close();
+      else { void refreshSafeTradeAccount(); void connect(); }
+    };
+    void refreshSafeTradeAccount();
+    lastRestCheck = Date.now();
+    void connect();
+    const timer = setInterval(() => {
+      if (document.hidden) return;
+      const period = accountStreamActive.current ? 60_000 : 30_000;
+      if (Date.now() - lastRestCheck >= period) {
+        lastRestCheck = Date.now();
+        void refreshSafeTradeAccount();
+      }
+    }, 10_000);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { stopped = true; close(); clearInterval(timer); document.removeEventListener("visibilitychange", onVisibility); };
   }, [tab, connectionToken, refreshSafeTradeAccount]);
 
   useEffect(() => { biometric.status().then(setBiometricStatus).catch(() => {}); }, []);

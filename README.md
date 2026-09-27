@@ -1,4 +1,4 @@
-# Pearl Wallet 0.2.17
+# Pearl Wallet 0.2.18
 
 Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；SafeTrade 只读展示 PRL/USDT 行情及 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
 
@@ -26,7 +26,7 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.17-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.17-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.18-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.18-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 
@@ -37,6 +37,8 @@ APK 位于 `releases/`。`PearlWallet-0.2.17-debug.apk` 可覆盖此前安装的
 ## SafeTrade 服务
 
 本地执行 `npm run server` 前，设置 `PEARL_CREDENTIAL_KEY_FILE` 为一个仅服务进程可读取的文件，内容是随机 32 字节密钥的 Base64 编码；设置 `PEARL_DATA_DIR` 保存 SQLite 数据库。密钥文件丢失后，已保存的 SafeTrade 连接无法解密。默认只监听 `127.0.0.1:8787`。公开 `GET /api/safetrade/overview` 返回价格、盘口和成交，`GET /api/safetrade/candles?interval=1m` 返回指定周期 K 线；原 `GET /api/safetrade?interval=1m` 继续兼容旧版。公开数据在服务端短时缓存并后台刷新，App 会按周期保存公开 K 线，切换时先显示已有数据。`POST /api/safetrade/connection` 验证只读密钥并返回随机令牌；`GET/DELETE /api/safetrade/account` 需要令牌，分别读取 PRL、USDT 余额和撤销连接。
+
+服务端持续订阅 SafeTrade 的公开 WebSocket 行情、盘口增量和成交，按序号维护盘口，并通过 `/api/safetrade/stream` 将增量推送给前台 App。历史 K 线仍通过 REST 获取，当前 K 线由实时成交更新，并定期用 REST 校正。账户余额使用 SafeTrade 私有 WebSocket 事件触发只读 REST 核对；App 先凭连接令牌换取一次性短期票据，再连接 `/api/safetrade/account-stream`。断线时自动重连，REST 定时刷新继续兜底。WebSocket 服务端需通过 Nginx 转发 Upgrade 请求。
 
 新服务器 `104.160.38.45` 使用 `deploy/install-api-runtime.sh` 安装独立的 Node 24 运行环境，以 `deploy/pearlwallet-api.service` 启动服务，只监听 `127.0.0.1:8788`；专用 Nginx 虚拟主机配置见 `deploy/nginx-pearlwallet.conf`。部署时先执行 `nginx -t`，通过后重载。服务端加密密钥位于 `/var/lib/pearlwallet/credential-key`，不上传到仓库。SafeTrade 已放行该服务器 IP，HTTPS 行情、盘口、市场成交和只读账户连接均已实测成功。
 

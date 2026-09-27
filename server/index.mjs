@@ -3,7 +3,9 @@ import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes }
 import { readFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { WebSocketServer, WebSocket } from 'ws';
 import { normalizeCandle, normalizeDepth, normalizePublicTrades, normalizeTicker, PERIODS } from './safetrade-data.mjs';
+import { createSafeTradeFeed } from './safetrade-ws.mjs';
 
 const HOST = process.env.PEARL_SERVER_HOST || '127.0.0.1';
 const PORT = Number(process.env.PEARL_SERVER_PORT || 8787);
@@ -27,6 +29,80 @@ const ALLOWED_ORIGINS = new Set(['http://localhost', 'https://localhost', 'http:
 const marketCache = new Map();
 const accountCache = new Map();
 const connectionAttempts = new Map();
+const streamClients = new Set();
+const streamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const accountStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const accountStreamTickets = new Map();
+const accountStreams = new Map();
+let streamFlushTimer;
+let liveOverview = null;
+const pendingFrames = new Map();
+
+function broadcast(frame) {
+  const key = frame.type === 'candle' ? `candle:${frame.interval}` : frame.type;
+  if (frame.type === 'overview-patch') {
+    const previous = pendingFrames.get(key);
+    pendingFrames.set(key, { type: frame.type, data: { ...previous?.data, ...frame.data } });
+  } else pendingFrames.set(key, frame);
+  if (streamFlushTimer) return;
+  streamFlushTimer = setTimeout(() => {
+    streamFlushTimer = null;
+    const frames = [...pendingFrames.values()];
+    pendingFrames.clear();
+    for (const client of streamClients) {
+      if (client.readyState !== WebSocket.OPEN) continue;
+      if (client.bufferedAmount > 256_000) { client.terminate(); continue; }
+      for (const item of frames) {
+        if (item.type === 'candle' && item.interval !== client.marketInterval) continue;
+        client.send(JSON.stringify(item));
+      }
+    }
+  }, 120);
+}
+
+function updateOverview(change) {
+  const previous = liveOverview || marketCache.get('overview')?.value;
+  liveOverview = {
+    pair: 'PRL/USDT', price: null, stats24h: null,
+    depth: { asks: [], bids: [] }, trades: [], marketError: null,
+    ...previous, ...change, updatedAt: Date.now(),
+  };
+  broadcast({ type: 'overview-patch', data: { ...change, updatedAt: liveOverview.updatedAt } });
+}
+
+function updateCandlesFromTrade(trade) {
+  if (!Number.isFinite(trade.time) || !Number.isFinite(trade.price)) return;
+  for (const [interval, period] of Object.entries(PERIODS)) {
+    const entry = marketCache.get(`candles:${interval}`);
+    const series = entry?.value;
+    if (!series?.candles.length || trade.time < Math.floor(series.updatedAt / 1000) - 1) continue;
+    const time = Math.floor(trade.time / (period * 60)) * period * 60;
+    const candles = series.candles.slice();
+    const last = candles.at(-1);
+    if (time < last.time) continue;
+    const candle = time === last.time
+      ? { ...last, high: Math.max(last.high, trade.price), low: Math.min(last.low, trade.price), close: trade.price, empty: false }
+      : { time, open: trade.price, high: trade.price, low: trade.price, close: trade.price, volume: 0, empty: false };
+    if (time === last.time) candles[candles.length - 1] = candle;
+    else { candles.push(candle); if (candles.length > 300) candles.shift(); }
+    marketCache.set(`candles:${interval}`, { ...entry, value: { ...series, candles, updatedAt: Date.now() } });
+    broadcast({ type: 'candle', interval, candle, updatedAt: Date.now() });
+  }
+}
+
+const publicFeed = createSafeTradeFeed({
+  apiBase: API_BASE,
+  fetchDepth: () => fetchJson('/trade/public/markets/prlusdt/depth?limit=50'),
+  onTicker: (ticker) => updateOverview({ price: ticker.price, stats24h: ticker.stats24h }),
+  onDepth: (depth) => updateOverview({ depth }),
+  onTrades: (trades) => {
+    const existing = liveOverview?.trades || marketCache.get('overview')?.value?.trades || [];
+    const merged = [...trades, ...existing.filter((row) => !trades.some((trade) => trade.id === row.id))]
+      .sort((a, b) => b.time - a.time).slice(0, 20);
+    updateOverview({ trades: merged, price: trades.at(-1)?.price ?? liveOverview?.price ?? null });
+    for (const trade of trades) updateCandlesFromTrade(trade);
+  },
+});
 
 function json(response, status, body) {
   response.statusCode = status;
@@ -157,17 +233,75 @@ function balancesOnly(data) {
   return { PRL: asset('PRL'), USDT: asset('USDT') };
 }
 
-async function accountData(token) {
+async function accountData(token, force = false) {
   const hash = tokenHash(token);
   const entry = findConnection.get(hash);
   if (!entry) return null;
   const previous = accountCache.get(hash);
-  if (previous && Date.now() - previous.updatedAt < 20_000) return previous;
+  if (!force && previous && Date.now() - previous.updatedAt < 20_000) return previous;
   const { key, secret } = decrypt(entry.credentials);
   const balances = balancesOnly(await fetchJson('/trade/account/balances/spot', authHeaders(key, secret)));
   const result = { balances, updatedAt: Date.now() };
   accountCache.set(hash, result);
   return result;
+}
+
+function startAccountFeed(client, hash, credentials) {
+  const { key, secret } = decrypt(credentials);
+  const endpoint = `${API_BASE.replace(/^http/, 'ws').replace(/\/$/, '')}/websocket/private`;
+  let upstream;
+  let heartbeat;
+  let retryTimer;
+  let retryMs = 1000;
+  let stopped = false;
+  const send = (data) => {
+    if (client.readyState === WebSocket.OPEN) client.send(JSON.stringify(data));
+  };
+  const refresh = async () => {
+    if (stopped) return;
+    const entry = findConnection.get(hash);
+    if (!entry) { client.close(1008, 'Connection revoked'); return; }
+    try {
+      const balances = balancesOnly(await fetchJson('/trade/account/balances/spot', authHeaders(key, secret)));
+      const result = { balances, updatedAt: Date.now() };
+      accountCache.set(hash, result);
+      send({ type: 'account', data: result });
+    } catch { /* The App keeps the last balance and retries through REST. */ }
+  };
+  const connect = () => {
+    if (stopped || client.readyState !== WebSocket.OPEN) return;
+    upstream = new WebSocket(endpoint, { headers: authHeaders(key, secret), handshakeTimeout: 10_000 });
+    upstream.on('open', () => {
+      retryMs = 1000;
+      upstream.send(JSON.stringify({ event: 'subscribe', streams: ['balance'] }));
+      heartbeat = setInterval(() => { if (upstream.readyState === WebSocket.OPEN) upstream.ping(); }, 25_000);
+      void refresh();
+    });
+    upstream.on('message', (message) => {
+      let data;
+      try { data = JSON.parse(String(message)); } catch { return; }
+      if (Object.hasOwn(data || {}, 'balance')) void refresh();
+    });
+    upstream.on('error', () => {});
+    upstream.on('close', () => {
+      clearInterval(heartbeat);
+      if (!stopped) {
+        retryTimer = setTimeout(connect, retryMs);
+        retryMs = Math.min(retryMs * 2, 30_000);
+      }
+    });
+  };
+  client.on('close', () => {
+    stopped = true;
+    clearTimeout(retryTimer);
+    clearInterval(heartbeat);
+    upstream?.terminate();
+    const clients = accountStreams.get(hash);
+    clients?.delete(client);
+    if (clients?.size === 0) accountStreams.delete(hash);
+  });
+  void refresh();
+  connect();
 }
 
 async function readBody(request) {
@@ -249,12 +383,26 @@ async function handle(request, response) {
     insertConnection.run(tokenHash(token), encrypt({ key, secret }), Date.now());
     return json(response, 201, { token });
   }
+  if (url.pathname === '/api/safetrade/account-stream-ticket' && request.method === 'POST') {
+    const token = requestToken(request);
+    if (!token) return json(response, 401, { error: 'Not connected' });
+    const hash = tokenHash(token);
+    if (!findConnection.get(hash)) return json(response, 401, { error: 'Connection expired' });
+    const ticket = randomBytes(24).toString('base64url');
+    accountStreamTickets.set(ticket, { hash, expiresAt: Date.now() + 30_000 });
+    for (const [value, entry] of accountStreamTickets) {
+      if (entry.expiresAt < Date.now()) accountStreamTickets.delete(value);
+    }
+    return json(response, 200, { ticket });
+  }
   if (url.pathname === '/api/safetrade/account') {
     const token = requestToken(request);
     if (!token) return json(response, 401, { error: '未连接 SafeTrade' });
     if (request.method === 'DELETE') {
-      deleteConnection.run(tokenHash(token));
-      accountCache.delete(tokenHash(token));
+      const hash = tokenHash(token);
+      deleteConnection.run(hash);
+      accountCache.delete(hash);
+      for (const client of accountStreams.get(hash) || []) client.close(1008, 'Connection revoked');
       return json(response, 200, { disconnected: true });
     }
     if (request.method === 'GET') {
@@ -267,10 +415,65 @@ async function handle(request, response) {
   return json(response, 404, { error: 'Not found' });
 }
 
-http.createServer((request, response) => {
+const server = http.createServer((request, response) => {
   handle(request, response).catch(() => json(response, 500, { error: 'Server error' }));
-}).listen(PORT, HOST, function () {
+});
+
+server.on('upgrade', (request, socket, head) => {
+  const origin = request.headers.origin;
+  let pathname;
+  try { pathname = new URL(request.url || '/', `http://${HOST}:${PORT}`).pathname; }
+  catch { socket.destroy(); return; }
+  if ((origin && !ALLOWED_ORIGINS.has(origin)) || (pathname !== '/api/safetrade/stream' && pathname !== '/api/safetrade/account-stream')) {
+    socket.destroy();
+    return;
+  }
+  if (pathname === '/api/safetrade/account-stream') {
+    const protocols = String(request.headers['sec-websocket-protocol'] || '').split(',').map((part) => part.trim());
+    const ticket = protocols.find((part) => /^ticket\.[A-Za-z0-9_-]{32}$/.test(part))?.slice(7);
+    const entry = ticket && accountStreamTickets.get(ticket);
+    if (!entry || entry.expiresAt < Date.now() || !findConnection.get(entry.hash)) { socket.destroy(); return; }
+    accountStreamTickets.delete(ticket);
+    const clients = accountStreams.get(entry.hash) || new Set();
+    if (clients.size >= 3) { socket.destroy(); return; }
+    accountStreamServer.handleUpgrade(request, socket, head, (client) => {
+      clients.add(client);
+      accountStreams.set(entry.hash, clients);
+      client.isAlive = true;
+      client.on('pong', () => { client.isAlive = true; });
+      startAccountFeed(client, entry.hash, findConnection.get(entry.hash).credentials);
+    });
+    return;
+  }
+  if (streamClients.size >= 100) { socket.destroy(); return; }
+  streamServer.handleUpgrade(request, socket, head, (client) => {
+    streamClients.add(client);
+    client.marketInterval = '1m';
+    client.isAlive = true;
+    client.on('pong', () => { client.isAlive = true; });
+    client.on('message', (message) => {
+      let data;
+      try { data = JSON.parse(String(message)); } catch { return; }
+      if (data?.type === 'subscribe' && PERIODS[data.interval]) client.marketInterval = data.interval;
+    });
+    client.on('close', () => streamClients.delete(client));
+    const overview = liveOverview || marketCache.get('overview')?.value;
+    if (overview) client.send(JSON.stringify({ type: 'overview', data: overview }));
+  });
+});
+
+setInterval(() => {
+  const clients = [...streamClients, ...[...accountStreams.values()].flatMap((group) => [...group])];
+  for (const client of clients) {
+    if (!client.isAlive) { client.terminate(); continue; }
+    client.isAlive = false;
+    client.ping();
+  }
+}, 25_000).unref();
+
+server.listen(PORT, HOST, function () {
   console.log(`Pearl SafeTrade server listening on ${HOST}:${this.address().port}`);
   void overviewData().catch(() => {});
   void candleData('1m').catch(() => {});
+  if (process.env.SAFETRADE_WS_DISABLED !== '1') publicFeed.start();
 });

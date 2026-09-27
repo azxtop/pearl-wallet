@@ -13,6 +13,10 @@ export type MarketData = {
 
 export type MarketOverview = Pick<MarketData, 'pair' | 'price' | 'stats24h' | 'depth' | 'trades' | 'marketError' | 'updatedAt'>;
 export type CandleSeries = Pick<MarketData, 'candles' | 'updatedAt'> & { interval: string };
+export type MarketStreamFrame =
+  | { type: 'overview'; data: MarketOverview }
+  | { type: 'overview-patch'; data: Partial<MarketOverview> & { updatedAt: number } }
+  | { type: 'candle'; interval: string; candle: MarketData['candles'][number]; updatedAt: number };
 
 export type AccountData = {
   balances: { PRL: { available: string; locked: string }; USDT: { available: string; locked: string } };
@@ -44,6 +48,9 @@ async function request<T>(url: string, method = 'GET', data?: object, token?: st
 export const loadMarket = (interval: string) => request<MarketData>(`${API_URL}?interval=${encodeURIComponent(interval)}`);
 export const loadMarketOverview = () => request<MarketOverview>(`${API_URL}/overview`);
 export const loadMarketCandles = (interval: string) => request<CandleSeries>(`${API_URL}/candles?interval=${encodeURIComponent(interval)}`);
+export const openMarketStream = () => new WebSocket(`${API_URL.replace(/^http/, 'ws')}/stream`);
 export const connectAccount = (key: string, secret: string) => request<{ token: string }>(`${API_URL}/connection`, 'POST', { key, secret });
 export const loadAccount = (token: string) => request<AccountData>(`${API_URL}/account`, 'GET', undefined, token);
+export const accountStreamTicket = (token: string) => request<{ ticket: string }>(`${API_URL}/account-stream-ticket`, 'POST', undefined, token);
+export const openAccountStream = (ticket: string) => new WebSocket(`${API_URL.replace(/^http/, 'ws')}/account-stream`, ['pearl-v1', `ticket.${ticket}`]);
 export const disconnectAccount = (token: string) => request<{ disconnected: boolean }>(`${API_URL}/account`, 'DELETE', undefined, token);
