@@ -6,6 +6,7 @@ export type PublicMarketCache = { overview: MarketOverview | null; series: Parti
 
 const KEY = 'pearl-public-market-cache-v1';
 const WPRL_KEY = 'pearl-wprl-market-cache-v1';
+const HYPERLIQUID_KEY = 'pearl-hyperliquid-market-cache-v1';
 const EMPTY = (): PublicMarketCache => ({ overview: null, series: {} });
 const validTime = (value: unknown) => typeof value === 'number' && Number.isFinite(value)
   && value > Date.now() - 7 * 24 * 60 * 60 * 1000 && value <= Date.now() + 60_000;
@@ -52,5 +53,15 @@ export function loadWprlMarketCache(): PublicMarketCache {
 
 export function saveWprlMarketCache(cache: PublicMarketCache): void {
   try { localStorage.setItem(WPRL_KEY, JSON.stringify(cache)); }
+  catch { /* Public cache is optional if storage is full. */ }
+}
+
+export function loadHyperliquidMarketCache(): PublicMarketCache {
+  try { return parsePublicMarketCache(localStorage.getItem(HYPERLIQUID_KEY)); }
+  catch { return EMPTY(); }
+}
+
+export function saveHyperliquidMarketCache(cache: PublicMarketCache): void {
+  try { localStorage.setItem(HYPERLIQUID_KEY, JSON.stringify(cache)); }
   catch { /* Public cache is optional if storage is full. */ }
 }
