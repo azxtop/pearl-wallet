@@ -188,7 +188,7 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .app input, .app textarea, .app .secret-phrase { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 .app.trade-active, .trade-active .content, .trade-page { background: #fff; }
 .trade-active .content { padding-left: 0; padding-right: 0; }
-.trade-page { --trade-green: #5dbb91; --trade-red: #e45468; --trade-muted: #92979c; color: #171c1a; padding-bottom: 30px; }
+.trade-page { --trade-green: #5eba89; --trade-red: #e25460; --trade-muted: #92979c; color: #171c1a; padding-bottom: 30px; }
 .trade-page .pair-head, .trade-page .market-summary, .trade-page .intervals, .trade-page .market-tabs, .trade-page .book, .trade-page .recent-trades, .trade-page .exchange-assets-head, .trade-page .exchange-balances, .trade-page .safetrade-connect, .trade-page > .inline-error { margin-left: 18px; margin-right: 18px; }
 .pair-head { padding-top: 13px; padding-bottom: 12px; }
 .pair-head h1 { font-size: 21px; letter-spacing: -.025em; font-weight: 700; }
@@ -209,12 +209,23 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .intervals button.active, .market-tabs button.active { border-bottom-color: #f0c93e; }
 .trade-page .chart-card { background: transparent; border: 0; }
 .trade-page .chart-shell svg { touch-action: none; margin-top: 2px; display: block; }
-.chart-toolbar { margin: 0 18px; }
-.chart-controls button { min-width: 31px; height: 30px; border-color: #e9eceb; color: #495150; }
+.chart-toolbar { margin: 0 18px; min-height: 30px; }
+.chart-latest { border: 1px solid #e9eceb; border-radius: 6px; background: #fff; color: #495150; padding: 5px 8px; font-size: 11px; }
+.chart-stage { position: relative; }
 .chart-grid { stroke: #f0f1f1; stroke-width: .8; }
-.chart-price-label { fill: #969c9d; font-size: 15px; }
+.chart-stage .chart-price-label { position: absolute; right: 4px; z-index: 1; color: #969c9d; font-size: 11px; line-height: 1; pointer-events: none; font-variant-numeric: tabular-nums; text-shadow: 0 0 4px #fff, 0 0 4px #fff; }
+.chart-time-label { position: absolute; top: 75.8%; transform: translateX(-50%); color: #929a9b; font-size: 10px; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
+.chart-crosshair line { stroke: #333b3a; stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
+.chart-crosshair circle { fill: #171c1a; stroke: #fff; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-detail-popup { position: absolute; z-index: 2; top: 28px; width: 166px; padding: 10px 11px; background: #fffffff0; border: 1px solid #e6e9e8; border-radius: 9px; box-shadow: 0 4px 15px #15241b15; font-size: 10px; color: #485050; pointer-events: auto; }
+.chart-detail-popup.on-left { left: 12px; }.chart-detail-popup.on-right { right: 12px; }
+.chart-detail-popup div { display: flex; justify-content: space-between; gap: 5px; margin: 3px 0; }
+.chart-detail-popup strong { color: #202827; font-weight: 600; font-variant-numeric: tabular-nums; }
+.chart-detail-popup strong.positive { color: var(--trade-green); }.chart-detail-popup strong.negative { color: var(--trade-red); }
+.chart-detail-popup button { position: absolute; right: 5px; top: 1px; background: transparent; border: 0; color: #8d9993; font-size: 14px; }
 .trade-page .candle.up { fill: var(--trade-green); stroke: var(--trade-green); }
 .trade-page .candle.down { fill: var(--trade-red); stroke: var(--trade-red); }
+.trade-page .volume-bar { opacity: .34; }
 .chart-axis { padding: 6px 18px; color: #9aa0a0; }
 .chart-candle-details { padding: 0 18px; font-size: 11px; }
 .market-tabs { margin-top: 22px; border-color: #f0f1f1; }
@@ -229,8 +240,8 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .book-side-head { color: var(--trade-muted); font-size: 11px; height: 29px; }
 .book-side-head span:last-child { text-align: right; }
 .book-row { min-height: 31px; padding: 5px 2px; font-size: 11.5px; white-space: nowrap; overflow: hidden; background: linear-gradient(to left, var(--book-color) var(--book-fill), transparent var(--book-fill)); }
-.book-row.bid { --book-color: #5dbb911b; }
-.book-row.ask { --book-color: #e454681b; }
+.book-row.bid { --book-color: #5eba891f; }
+.book-row.ask { --book-color: #e254601f; }
 .book-row .book-price { font-weight: 600; }
 .book-row .book-amount { color: #303737; }
 .book-row span:last-child { text-align: right; }

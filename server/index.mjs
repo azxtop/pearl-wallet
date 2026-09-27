@@ -95,10 +95,10 @@ async function marketData(interval) {
   const timeFrom = now - period * 60 * 301;
   const query = new URLSearchParams({ period: String(period), time_from: String(timeFrom), time_to: String(now), limit: '300' });
   const results = await Promise.allSettled([
-    cached('ticker', 8_000, async () => normalizeTicker(await fetchJson('/trade/public/tickers/prlusdt'))),
-    cached('depth', 8_000, async () => normalizeDepth(await fetchJson('/trade/public/markets/prlusdt/depth?limit=10'))),
-    cached('trades', 8_000, async () => normalizePublicTrades(await fetchJson('/trade/public/markets/prlusdt/trades?limit=20'))),
-    cached(`candles:${interval}`, 15_000, async () => {
+    cached('ticker', 5_000, async () => normalizeTicker(await fetchJson('/trade/public/tickers/prlusdt'))),
+    cached('depth', 5_000, async () => normalizeDepth(await fetchJson('/trade/public/markets/prlusdt/depth?limit=10'))),
+    cached('trades', 5_000, async () => normalizePublicTrades(await fetchJson('/trade/public/markets/prlusdt/trades?limit=20'))),
+    cached(`candles:${interval}`, 10_000, async () => {
       const rows = await fetchJson(`/trade/public/markets/prlusdt/k-line?${query}`);
       if (!Array.isArray(rows)) throw new Error('Invalid candles');
       return rows.map(normalizeCandle).filter(Boolean).sort((a, b) => a.time - b.time);
