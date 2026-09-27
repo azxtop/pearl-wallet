@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { aggregateWprlCandles, normalizeWprlCandles, parseSwap, SWAP_TOPIC, WPRL_POOL } from './wprl.mjs';
+import { aggregateWprlCandles, combineWprlCandles, normalizeWprlCandles, parseSwap, SWAP_TOPIC, WPRL_POOL } from './wprl.mjs';
 
 const word = (value) => (value < 0n ? (1n << 256n) + value : value).toString(16).padStart(64, '0');
 
@@ -36,4 +36,11 @@ test('minute candles can provide a usable hourly fallback during upstream rate l
   const result = aggregateWprlCandles(rows, '1h');
   assert.equal(result.length, 2);
   assert.deepEqual(result[0], { time: 3600, open: 1, high: 1.4, low: 0.9, close: 1.3, volume: 5, empty: false });
+});
+
+test('reference candles end before recording starts and never replace recorded candles', () => {
+  const make = (time, close) => ({ time, open: close, high: close, low: close, volume: 1, close, empty: false });
+  const merged = combineWprlCandles([make(6000, 1), make(6060, 2), make(6120, 3)], [make(6060, 4), make(6120, 5)], 6065, '1m');
+  assert.equal(merged.source, 'mixed');
+  assert.deepEqual(merged.candles.map((row) => [row.time, row.close]), [[6000, 1], [6060, 4], [6120, 5]]);
 });

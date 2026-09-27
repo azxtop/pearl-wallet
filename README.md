@@ -1,4 +1,4 @@
-# Pearl Wallet 0.2.22
+# Pearl Wallet 0.2.23
 
 Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；Market 可切换 SafeTrade PRL/USDT 与以太坊 Uniswap V3 WPRL/USDT，SafeTrade 还可只读展示 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
 
@@ -26,7 +26,7 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.22-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.22-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.23-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.23-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 
@@ -42,7 +42,7 @@ APK 位于 `releases/`。`PearlWallet-0.2.22-debug.apk` 可覆盖此前安装的
 
 新服务器 `104.160.38.45` 使用 `deploy/install-api-runtime.sh` 安装独立的 Node 24 运行环境，以 `deploy/pearlwallet-api.service` 启动服务，只监听 `127.0.0.1:8788`；专用 Nginx 虚拟主机配置见 `deploy/nginx-pearlwallet.conf`。部署时先执行 `nginx -t`，通过后重载。服务端加密密钥位于 `/var/lib/pearlwallet/credential-key`，不上传到仓库。SafeTrade 已放行该服务器 IP，HTTPS 行情、盘口、市场成交和只读账户连接均已实测成功。
 
-WPRL 行情使用以太坊主网 Uniswap V3 的 WPRL/USDT 交易池 `0x89a67c6dee35db9815da2fb9191f0998a8b37c39`。服务端用 GeckoTerminal 公开接口补历史 K 线与概览，通过 Infura 以太坊 RPC 和 WebSocket 订阅该池的 `Swap` 日志，推送最新成交并更新当前 K 线；`GET /api/wprl/overview`、`GET /api/wprl/candles?interval=1m` 与 `/api/wprl/stream` 分别提供概览、历史 K 线和推送。服务端对公开历史接口限频，遇到 429 时暂停请求，保留 `/var/lib/pearlwallet/wprl-market-cache.json` 中的最近行情，并可将已有分钟 K 线聚合为其他周期。运行时设置 `WPRL_ENABLED=1`、`PEARL_INFURA_KEYS_DB` 指向仅服务账号可读的 SQLite 文件；文件须含 `infura_keys(api_key, available)` 表。RPC Key 只保存在服务器，绝不可提交仓库或放进 `VITE_*` 变量。WPRL 与 PRL 是不同资产，图表和成交分别按来源缓存。
+WPRL 行情使用以太坊主网 Uniswap V3 的 WPRL/USDT 交易池 `0x89a67c6dee35db9815da2fb9191f0998a8b37c39`。服务首次启用时把当前区块的下一个区块设为永久采集起点，不补起点之前的成交。Infura WebSocket 实时接收 `Swap` 日志，RPC 每 15 秒按持久化区块进度补漏并复查最近 20 个区块。服务端在 `/var/lib/pearlwallet/wprl-market.sqlite` 的 WAL SQLite 中保存成交、扫描进度和 1 分钟 K 线：成交保留 30 天，1 分钟 K 线长期保存；5 分钟至日线从分钟线生成。没有成交而已扫描的分钟按前收盘价显示零成交量，未扫描到的区间不会被当作零成交。短链重组通过复查重算受影响的分钟线。超过完整 24 小时的 24h 指标来自本地记录；此前概览和历史参考 K 线使用 GeckoTerminal，历史 K 线不会导入本地正式记录。参考 K 线的美元成交量按收盘价换算为近似 WPRL 数量，正式记录的数量来自链上 Swap。`GET /api/wprl/overview`、`GET /api/wprl/candles?interval=1m` 与 `/api/wprl/stream` 分别提供概览、K 线和推送。运行时设置 `WPRL_ENABLED=1`、`PEARL_INFURA_KEYS_DB` 指向仅服务账号可读的 SQLite 文件；文件须含 `infura_keys(api_key, available)` 表。RPC Key 只保存在服务器，绝不可提交仓库或放进 `VITE_*` 变量。WPRL 与 PRL 是不同资产，图表和成交分别按来源缓存。
 
 ## 已知限制
 

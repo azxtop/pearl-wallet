@@ -17,6 +17,7 @@ Environment=PEARL_UPDATE_FILE=/var/www/pearlwallet/api/update.json
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
+UMask=0077
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict

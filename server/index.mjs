@@ -110,6 +110,7 @@ const publicFeed = createSafeTradeFeed({
 const wprlFeed = createWprlFeed({
   keyDbPath: process.env.PEARL_INFURA_KEYS_DB || '',
   cachePath: resolve(DATA_DIR, 'wprl-market-cache.json'),
+  storePath: process.env.WPRL_ENABLED === '1' ? resolve(DATA_DIR, 'wprl-market.sqlite') : '',
   onFrame: (frame) => {
     for (const client of wprlStreamClients) {
       if (client.readyState !== WebSocket.OPEN) continue;
