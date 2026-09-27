@@ -175,6 +175,13 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .settings-title strong { display: block; font-size: 16px; }.settings-title small { display: block; color: #8995a4; margin-top: 4px; line-height: 1.4; }
 .settings-card .field { margin-bottom: 12px; }
 .settings-card .secondary { margin-top: 15px; }
+.settings-links { display: grid; gap: 1px; margin: -4px 0 15px; }
+.settings-links a { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; color: #24364a; font-size: 14px; border-bottom: 1px solid #edf0f3; text-decoration: none; }
+.settings-links a span { color: #718093; overflow-wrap: anywhere; text-align: right; }
+.donation-block > span { display: block; margin: 16px 0 8px; color: #718093; font-size: 12px; }
+.donation-copy { display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px; border: 1px solid #e1e5eb; border-radius: 11px; background: #f7f8fa; color: #24364a; text-align: left; }
+.donation-copy span { flex: 1; min-width: 0; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.donation-copy svg { flex: none; }
 .lock-button { width: 100%; display: flex; justify-content: center; align-items: center; gap: 8px; border: 0; background: none; color: #9f4141; padding: 17px; margin-top: 12px; }
 .secret-phrase { margin-top: 15px; background: #fff3e8; color: #50321b; padding: 15px; border-radius: 10px; line-height: 1.8; overflow-wrap: anywhere; }
 .inline-error { color: #9d433a; background: #fff0ed; border-radius: 11px; padding: 13px 15px; margin: 14px 0; font-size: 13px; line-height: 1.5; }

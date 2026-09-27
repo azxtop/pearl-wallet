@@ -24,7 +24,11 @@ type Tab = "wallet" | "market" | "setting";
 type MarketSource = "safetrade" | "wprl";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.23";
+const APP_VERSION = "0.2.24";
+const PROJECT_URL = "https://pearlwallet.az1993.xyz/";
+const SOURCE_URL = "https://github.com/azxtop/pearl-wallet";
+const CONTACT_EMAIL = "az1993515909@gmail.com";
+const DONATION_ADDRESS = "prl1pm2u7jht5vqqw32k5e2m87dpwhavwwrjnd6d7tjtpsv3l8qzzgdds8d449j";
 type Interval = MarketInterval;
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
@@ -1024,8 +1028,8 @@ export default function App() {
     });
   }
 
-  async function copy(text: string) {
-    try { await navigator.clipboard.writeText(text); setNotice("地址已复制"); }
+  async function copy(text: string, message = "地址已复制") {
+    try { await navigator.clipboard.writeText(text); setNotice(message); }
     catch { setError("无法复制，请长按地址手动复制"); }
   }
 
@@ -1320,6 +1324,7 @@ export default function App() {
           {addresses && !watchMode && <button className="lock-button" onClick={lockWallet}><Icon name="lock" size={19} /> 立即锁定钱包</button>}
         </>}
         <div className="settings-card"><div className="settings-title"><Icon name="refresh" /><div><strong>版本 {APP_VERSION}</strong></div></div><button className="secondary wide" onClick={checkUpdate}>检查更新</button>{updateStatus && <p className="update-status">{updateStatus}</p>}</div>
+        <div className="settings-card"><div className="settings-title"><Icon name="wallet" /><div><strong>项目与支持</strong></div></div><div className="settings-links"><a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">官方网站 <span aria-hidden="true">↗</span></a><a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">GitHub 源码 <span aria-hidden="true">↗</span></a><a href={`mailto:${CONTACT_EMAIL}`}>联系邮箱 <span>{CONTACT_EMAIL}</span></a></div><div className="donation-block"><span>PRL 捐赠地址</span><button type="button" className="donation-copy" onClick={() => copy(DONATION_ADDRESS, "捐赠地址已复制")} aria-label="复制 PRL 捐赠地址"><span>{DONATION_ADDRESS}</span><Icon name="copy" size={18} /></button></div></div>
       </section>}
     </main>
     {(error || notice) && <div className={error ? "toast error" : "toast"} role="status">{error || notice}<button onClick={() => { setError(""); setNotice(""); }}>×</button></div>}
