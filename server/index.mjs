@@ -1,208 +1,225 @@
 import http from 'node:http';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { readFileSync, mkdirSync } from 'node:fs';
-import { createHmac } from 'node:crypto';
-import { DatabaseSync } from 'node:sqlite';
 import { resolve } from 'node:path';
-import { candlesFromTrades, normalizeTrade } from './market.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { normalizeCandle, normalizeDepth, normalizePublicTrades, normalizeTicker, PERIODS } from './safetrade-data.mjs';
 
 const HOST = process.env.PEARL_SERVER_HOST || '127.0.0.1';
 const PORT = Number(process.env.PEARL_SERVER_PORT || 8787);
 if (!['127.0.0.1', '::1', 'localhost'].includes(HOST) && process.env.PEARL_ALLOW_CONTAINER_BIND !== '1') {
-  throw new Error('仅允许监听本机；对外发布时请使用带 HTTPS 和访问控制的反向代理');
+  throw new Error('Public bind requires a reverse proxy with HTTPS');
 }
 const API_BASE = process.env.SAFETRADE_API_BASE || 'https://safe.trade/api/v2';
-const CREDENTIAL_FILE = process.env.SAFETRADE_CREDENTIAL_FILE || 'private/safetrade.txt';
 const DATA_DIR = resolve(process.env.PEARL_DATA_DIR || 'server/data');
+const KEY_FILE = process.env.PEARL_CREDENTIAL_KEY_FILE;
+const keyText = KEY_FILE ? readFileSync(KEY_FILE, 'utf8').trim() : process.env.PEARL_CREDENTIAL_KEY;
+const DATA_KEY = keyText ? Buffer.from(keyText, 'base64') : null;
+if (!DATA_KEY || DATA_KEY.length !== 32) throw new Error('PEARL_CREDENTIAL_KEY_FILE must contain a base64 32-byte key');
 mkdirSync(DATA_DIR, { recursive: true });
-const db = new DatabaseSync(resolve(DATA_DIR, 'safetrade.sqlite'));
-db.exec('CREATE TABLE IF NOT EXISTS trades (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, price REAL NOT NULL, amount REAL NOT NULL)');
-db.exec('CREATE INDEX IF NOT EXISTS idx_trades_ts ON trades(ts)');
-const insertTrade = db.prepare('INSERT OR IGNORE INTO trades(id,ts,price,amount) VALUES(?,?,?,?)');
-const latestTrades = db.prepare('SELECT id,ts,price,amount FROM trades WHERE ts >= ? ORDER BY ts,id');
-const priorTrade = db.prepare('SELECT price FROM trades WHERE ts < ? ORDER BY ts DESC LIMIT 1');
-const latestRecordedTrade = db.prepare('SELECT ts FROM trades ORDER BY ts DESC LIMIT 1');
-const INTERVALS = Object.freeze({ '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 });
+const db = new DatabaseSync(resolve(DATA_DIR, 'accounts.sqlite'));
+db.exec('CREATE TABLE IF NOT EXISTS connections (token_hash TEXT PRIMARY KEY, credentials TEXT NOT NULL, created_at INTEGER NOT NULL)');
+const insertConnection = db.prepare('INSERT INTO connections(token_hash, credentials, created_at) VALUES(?, ?, ?)');
+const findConnection = db.prepare('SELECT credentials FROM connections WHERE token_hash = ?');
+const deleteConnection = db.prepare('DELETE FROM connections WHERE token_hash = ?');
 
-const state = {
-  marketError: '等待 SafeTrade 成交数据',
-  accountError: '等待 SafeTrade 账户数据',
-  balances: { PRL: null, USDT: null },
-  accountUpdatedAt: null,
-  lastTradeAt: latestRecordedTrade.get()?.ts ?? null,
-};
 const ALLOWED_ORIGINS = new Set(['http://localhost', 'https://localhost', 'http://localhost:5173', 'http://127.0.0.1:5173', 'https://pearlwallet.az1993.xyz']);
+const marketCache = new Map();
+const accountCache = new Map();
+const connectionAttempts = new Map();
 
-function credentials() {
-  if (process.env.SAFETRADE_API_KEY && process.env.SAFETRADE_API_SECRET) {
-    return { key: process.env.SAFETRADE_API_KEY.trim(), secret: process.env.SAFETRADE_API_SECRET.trim() };
-  }
-  const lines = readFileSync(CREDENTIAL_FILE, 'utf8').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  // The supplied file has a label followed by the key, then a label followed by the secret.
-  if (lines.length !== 4 || !lines[1] || !lines[3]) throw new Error('SafeTrade 凭据文件格式无效');
-  return { key: lines[1], secret: lines[3] };
+function json(response, status, body) {
+  response.statusCode = status;
+  response.end(JSON.stringify(body));
 }
 
-function authHeaders() {
-  const { key, secret } = credentials();
+function encrypt(value) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', DATA_KEY, iv);
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+  return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]).toString('base64');
+}
+
+function decrypt(value) {
+  const bytes = Buffer.from(value, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', DATA_KEY, bytes.subarray(0, 12));
+  decipher.setAuthTag(bytes.subarray(12, 28));
+  return JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8'));
+}
+
+function tokenHash(token) {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function requestToken(request) {
+  const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(request.headers.authorization || '');
+  return match?.[1] ?? null;
+}
+
+function authHeaders(key, secret) {
   const nonce = String(Date.now());
-  const signature = createHmac('sha256', secret).update(nonce + key).digest('hex');
-  return { 'X-Auth-Apikey': key, 'X-Auth-Nonce': nonce, 'X-Auth-Signature': signature, 'Content-Type': 'application/json;charset=utf-8' };
-}
-
-function recordTrade(raw) {
-  const trade = normalizeTrade(raw);
-  if (!trade) return;
-  insertTrade.run(trade.id, trade.ts, trade.price, trade.amount);
-  state.lastTradeAt = Math.max(state.lastTradeAt || 0, trade.ts);
-  state.marketError = null;
-}
-
-function takeTradeMessage(message) {
-  const data = typeof message === 'string' ? JSON.parse(message) : message;
-  const channel = data?.['prlusdt.trades'] ?? (data?.stream === 'prlusdt.trades' ? data.data : null);
-  if (!channel) return;
-  const entries = Array.isArray(channel) ? channel : [channel];
-  for (const entry of entries) recordTrade(entry);
-}
-
-let publicSocket;
-function connectPublicSocket() {
-  const url = API_BASE.replace(/^http/, 'ws') + '/websocket/public';
-  publicSocket = new WebSocket(url);
-  publicSocket.addEventListener('open', () => {
-    publicSocket.send(JSON.stringify({ event: 'subscribe', streams: ['prlusdt.trades'] }));
-  });
-  publicSocket.addEventListener('message', (event) => {
-    try { takeTradeMessage(event.data); } catch { state.marketError = 'SafeTrade 成交数据格式异常'; }
-  });
-  publicSocket.addEventListener('error', () => {
-    if (!state.marketError || state.marketError.includes('WebSocket')) state.marketError = 'SafeTrade WebSocket 连接失败';
-  });
-  publicSocket.addEventListener('close', () => {
-    if (!state.marketError || state.marketError.includes('WebSocket')) state.marketError = 'SafeTrade WebSocket 已断开';
-    setTimeout(connectPublicSocket, 15_000).unref();
-  });
+  return {
+    'X-Auth-Apikey': key,
+    'X-Auth-Nonce': nonce,
+    'X-Auth-Signature': createHmac('sha256', secret).update(nonce + key).digest('hex'),
+    'Content-Type': 'application/json;charset=utf-8',
+  };
 }
 
 async function fetchJson(path, headers = {}) {
   const response = await fetch(API_BASE + path, { headers, signal: AbortSignal.timeout(12_000) });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`SafeTrade HTTP ${response.status}`);
   return response.json();
 }
 
-async function refreshTrades() {
-  try {
-    const data = await fetchJson('/trade/public/markets/prlusdt/trades?limit=100');
-    if (!Array.isArray(data)) throw new Error('成交列表格式异常');
-    for (const raw of data) recordTrade(raw);
-  } catch (error) {
-    if (!state.lastTradeAt || Date.now() / 1000 - state.lastTradeAt > 120) {
-      state.marketError = `SafeTrade 行情不可用：${error.message}`;
-    }
-  }
+function cached(name, lifetime, fetcher) {
+  const now = Date.now();
+  const entry = marketCache.get(name);
+  if (entry?.value && now - entry.at < lifetime) return Promise.resolve(entry.value);
+  if (entry?.pending) return entry.pending;
+  const pending = fetcher().then((value) => {
+    marketCache.set(name, { value, at: Date.now() });
+    return value;
+  }).catch((error) => {
+    marketCache.set(name, { value: entry?.value, at: entry?.at ?? 0 });
+    if (entry?.value && now - entry.at < 300_000) return entry.value;
+    throw error;
+  });
+  marketCache.set(name, { ...entry, pending });
+  return pending;
 }
 
-function normalizeBalance(raw) {
-  if (!raw || typeof raw !== 'object') throw new Error('余额格式异常');
+async function marketData(interval) {
+  const period = PERIODS[interval];
+  const now = Math.floor(Date.now() / 1000);
+  const timeFrom = now - period * 60 * 121;
+  const query = new URLSearchParams({ period: String(period), time_from: String(timeFrom), time_to: String(now), limit: '120' });
+  const results = await Promise.allSettled([
+    cached('ticker', 8_000, async () => normalizeTicker(await fetchJson('/trade/public/tickers/prlusdt'))),
+    cached('depth', 8_000, async () => normalizeDepth(await fetchJson('/trade/public/markets/prlusdt/depth?limit=10'))),
+    cached('trades', 8_000, async () => normalizePublicTrades(await fetchJson('/trade/public/markets/prlusdt/trades?limit=20'))),
+    cached(`candles:${interval}`, 15_000, async () => {
+      const rows = await fetchJson(`/trade/public/markets/prlusdt/k-line?${query}`);
+      if (!Array.isArray(rows)) throw new Error('Invalid candles');
+      return rows.map(normalizeCandle).filter(Boolean).sort((a, b) => a.time - b.time);
+    }),
+  ]);
+  const value = (index, fallback) => results[index].status === 'fulfilled' ? results[index].value : fallback;
+  const ticker = value(0, null);
+  const candles = value(3, []);
+  if (!ticker && !candles.length) throw new Error('Market unavailable');
   return {
-    available: String(raw.balance ?? raw.available ?? '0'),
-    locked: String(raw.locked ?? raw.hold ?? '0'),
+    pair: 'PRL/USDT', interval,
+    price: ticker?.price ?? candles.at(-1)?.close ?? null,
+    stats24h: ticker?.stats24h ?? null,
+    depth: value(1, { asks: [], bids: [] }),
+    trades: value(2, []), candles,
+    marketError: results.some((item) => item.status === 'rejected') ? '部分行情暂不可用' : null,
+    updatedAt: Date.now(),
   };
 }
 
-async function refreshBalances() {
-  try {
-    const data = await fetchJson('/trade/account/balances/spot', authHeaders());
-    if (!Array.isArray(data)) throw new Error('余额列表格式异常');
-    const byCurrency = new Map(data.filter((item) => item && typeof item.currency === 'string')
-      .map((item) => [item.currency.toUpperCase(), item]));
-    state.balances = {
-      PRL: byCurrency.has('PRL') ? normalizeBalance(byCurrency.get('PRL')) : { available: '0', locked: '0' },
-      USDT: byCurrency.has('USDT') ? normalizeBalance(byCurrency.get('USDT')) : { available: '0', locked: '0' },
-    };
-    state.accountUpdatedAt = Date.now();
-    state.accountError = null;
-  } catch (error) {
-    state.balances = { PRL: null, USDT: null };
-    state.accountUpdatedAt = null;
-    state.accountError = `SafeTrade 账户不可用：${error.message}`;
-  }
+function balancesOnly(data) {
+  if (!Array.isArray(data)) throw new Error('Invalid balances');
+  const values = new Map(data.filter((item) => item && typeof item.currency === 'string')
+    .map((item) => [item.currency.toUpperCase(), item]));
+  const asset = (symbol) => {
+    const row = values.get(symbol);
+    return { available: String(row?.balance ?? '0'), locked: String(row?.locked ?? '0') };
+  };
+  return { PRL: asset('PRL'), USDT: asset('USDT') };
 }
 
-const server = http.createServer((request, response) => {
+async function accountData(token) {
+  const hash = tokenHash(token);
+  const entry = findConnection.get(hash);
+  if (!entry) return null;
+  const previous = accountCache.get(hash);
+  if (previous && Date.now() - previous.updatedAt < 20_000) return previous;
+  const { key, secret } = decrypt(entry.credentials);
+  const balances = balancesOnly(await fetchJson('/trade/account/balances/spot', authHeaders(key, secret)));
+  const result = { balances, updatedAt: Date.now() };
+  accountCache.set(hash, result);
+  return result;
+}
+
+async function readBody(request) {
+  let body = '';
+  for await (const chunk of request) {
+    body += chunk;
+    if (body.length > 4096) throw new Error('Request too large');
+  }
+  return JSON.parse(body);
+}
+
+function allowedToConnect(request) {
+  const ip = request.headers['x-real-ip'] || request.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const attempts = (connectionAttempts.get(ip) || []).filter((time) => now - time < 600_000);
+  if (attempts.length >= 6) return false;
+  attempts.push(now);
+  connectionAttempts.set(ip, attempts);
+  return true;
+}
+
+async function handle(request, response) {
   response.setHeader('Content-Type', 'application/json; charset=utf-8');
   response.setHeader('Cache-Control', 'no-store');
+  response.setHeader('X-Content-Type-Options', 'nosniff');
   const origin = request.headers.origin;
-  if (origin && !ALLOWED_ORIGINS.has(origin)) {
-    response.statusCode = 403;
-    response.end(JSON.stringify({ error: 'Origin denied' }));
-    return;
-  }
+  if (origin && !ALLOWED_ORIGINS.has(origin)) return json(response, 403, { error: 'Origin denied' });
   if (origin) response.setHeader('Access-Control-Allow-Origin', origin);
   if (request.method === 'OPTIONS') {
-    response.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    response.setHeader('Access-Control-Allow-Headers', 'Authorization');
-    response.end();
-    return;
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
+    response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+    return response.end();
   }
   const url = new URL(request.url || '/', `http://${HOST}:${PORT}`);
   if (request.method === 'GET' && url.pathname === '/api/update') {
-    try {
-      response.end(readFileSync(process.env.PEARL_UPDATE_FILE || resolve('server/update.json'), 'utf8'));
-    } catch {
-      response.statusCode = 503;
-      response.end(JSON.stringify({ error: 'Update metadata unavailable' }));
+    try { return json(response, 200, JSON.parse(readFileSync(process.env.PEARL_UPDATE_FILE || resolve('server/update.json'), 'utf8'))); }
+    catch { return json(response, 503, { error: 'Update metadata unavailable' }); }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/safetrade') {
+    const interval = url.searchParams.get('interval') || '1m';
+    if (!PERIODS[interval]) return json(response, 400, { error: 'Unsupported interval' });
+    try { return json(response, 200, await marketData(interval)); }
+    catch { return json(response, 503, { error: '行情暂不可用' }); }
+  }
+  if (url.pathname === '/api/safetrade/connection' && request.method === 'POST') {
+    if (!allowedToConnect(request)) return json(response, 429, { error: '连接尝试过于频繁' });
+    if (!String(request.headers['content-type'] || '').startsWith('application/json')) return json(response, 415, { error: 'Expected JSON' });
+    let data;
+    try { data = await readBody(request); }
+    catch { return json(response, 400, { error: '请求格式无效' }); }
+    const key = typeof data?.key === 'string' ? data.key.trim() : '';
+    const secret = typeof data?.secret === 'string' ? data.secret.trim() : '';
+    if (key.length < 8 || key.length > 256 || secret.length < 8 || secret.length > 256) {
+      return json(response, 400, { error: 'API Key 或 Secret 格式无效' });
     }
-    return;
+    try { balancesOnly(await fetchJson('/trade/account/balances/spot', authHeaders(key, secret))); }
+    catch { return json(response, 400, { error: '无法验证只读 API，请检查密钥和 SafeTrade IP 白名单' }); }
+    const token = randomBytes(32).toString('base64url');
+    insertConnection.run(tokenHash(token), encrypt({ key, secret }), Date.now());
+    return json(response, 201, { token });
   }
-  if (request.method !== 'GET' || url.pathname !== '/api/safetrade') {
-    response.statusCode = 404;
-    response.end(JSON.stringify({ error: 'Not found' }));
-    return;
+  if (url.pathname === '/api/safetrade/account') {
+    const token = requestToken(request);
+    if (!token) return json(response, 401, { error: '未连接 SafeTrade' });
+    if (request.method === 'DELETE') {
+      deleteConnection.run(tokenHash(token));
+      accountCache.delete(tokenHash(token));
+      return json(response, 200, { disconnected: true });
+    }
+    if (request.method === 'GET') {
+      try {
+        const data = await accountData(token);
+        return data ? json(response, 200, data) : json(response, 401, { error: '连接已失效' });
+      } catch { return json(response, 502, { error: '账户余额暂不可用' }); }
+    }
   }
-  const readToken = process.env.PEARL_READ_TOKEN;
-  if (readToken && request.headers.authorization !== `Bearer ${readToken}`) {
-    response.statusCode = 401;
-    response.end(JSON.stringify({ error: 'Unauthorized' }));
-    return;
-  }
-  const interval = url.searchParams.get('interval') || '1m';
-  const seconds = INTERVALS[interval];
-  if (!seconds) {
-    response.statusCode = 400;
-    response.end(JSON.stringify({ error: 'Unsupported interval' }));
-    return;
-  }
-  const end = Math.floor(Date.now() / 1000 / seconds) * seconds;
-  const start = end - 119 * seconds;
-  const rows = latestTrades.all(start);
-  const previousClose = priorTrade.get(start)?.price ?? null;
-  const candles = candlesFromTrades(rows, start, end, previousClose, seconds);
-  const last24h = latestTrades.all(Math.floor(Date.now() / 1000) - 86_400);
-  const high24h = last24h.reduce((value, trade) => Math.max(value, trade.price), -Infinity);
-  const low24h = last24h.reduce((value, trade) => Math.min(value, trade.price), Infinity);
-  const volume24h = last24h.reduce((sum, trade) => sum + trade.amount, 0);
-  const turnover24h = last24h.reduce((sum, trade) => sum + trade.amount * trade.price, 0);
-  const first24h = last24h[0]?.price;
-  const last24hPrice = last24h.at(-1)?.price;
-  const change24h = first24h && last24hPrice ? (last24hPrice / first24h - 1) * 100 : null;
-  response.end(JSON.stringify({
-    pair: 'PRL/USDT',
-    interval,
-    price: rows.at(-1)?.price ?? previousClose,
-    candles,
-    stats24h: { high: Number.isFinite(high24h) ? high24h : null, low: Number.isFinite(low24h) ? low24h : null, volume: volume24h, turnover: turnover24h, changePercent: change24h },
-    balances: state.balances,
-    lastTradeAt: state.lastTradeAt,
-    accountUpdatedAt: state.accountUpdatedAt,
-    marketError: state.marketError,
-    accountError: state.accountError,
-  }));
-});
+  return json(response, 404, { error: 'Not found' });
+}
 
-server.listen(PORT, HOST, () => console.log(`Pearl SafeTrade server listening on ${HOST}:${PORT}`));
-connectPublicSocket();
-refreshTrades();
-refreshBalances();
-setInterval(refreshTrades, 10_000).unref();
-setInterval(refreshBalances, 30_000).unref();
+http.createServer((request, response) => {
+  handle(request, response).catch(() => json(response, 500, { error: 'Server error' }));
+}).listen(PORT, HOST, function () { console.log(`Pearl SafeTrade server listening on ${HOST}:${this.address().port}`); });

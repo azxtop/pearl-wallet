@@ -1,4 +1,4 @@
-# Pearl Wallet 0.2.10
+# Pearl Wallet 0.2.11
 
 Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；SafeTrade 只读展示 PRL/USDT 行情及 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
 
@@ -10,7 +10,7 @@ Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账�
 - 每个钱包的上次余额和交易记录保存在本机，切换钱包或重启后先显示缓存并同步链上数据。缓存只用于展示，转账须等待新同步完成；离开设置页或切到后台会隐藏已显示的助记词并清空敏感输入。
 - 转账广播成功后，在本机保存交易 ID、所花输入和找零金额；浏览器尚未列出 0 确认转出时，Activity 立即显示待确认记录，余额显示估算找零，并阻止复用已广播的输入。浏览器同步完成后以链上数据为准。
 - App 前台每 5 秒用主浏览器扫描余额和 UTXO，仅在结果变化时读取交易历史；尝试连接浏览器 SSE，断线后逐步延长重连时间。主浏览器请求失败后暂停 60 秒起，切到备用浏览器并放慢检查，冷却结束后自动重试主浏览器。App 进入手机后台时暂停连接与轮询，返回前台立即同步。
-- SafeTrade 服务通过逐笔成交构造 1 分、5 分、15 分、1 小时、4 小时和日线 K 线。服务只读取 PRL/USDT 成交及 PRL、USDT 账户余额，不含交易和提款功能。数据服务只在服务器保存交易所 API 凭据。
+- SafeTrade 页面展示 PRL/USDT 官方 K 线、24 小时行情、订单簿和市场最新成交。公开行情不需要个人 API Key。用户可在 App 输入自己的只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PRL、USDT 余额；可在 App 中断开并撤销令牌。不含下单和提款功能。
 - 检查 HTTPS 版本清单、下载并校验 APK 的 SHA-256，再交给 Android 安装。更新 APK 必须与已安装应用使用同一签名密钥。
 
 ## 构建
@@ -25,21 +25,19 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.10-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.10-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.11-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.11-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 
 ## 公开仓库注意事项
 
-不要提交助记词、交易所 API 凭据、签名密钥、`.env` 文件、数据库或包含真实账户数据的日志。`private/`、`server/data/`、`releases/` 和本机构建产物已被 `.gitignore` 排除。`VITE_*` 环境变量会被打包进客户端，不能存放交易所 API 密钥或其他秘密；SafeTrade 凭据只应放在服务器端。
+不要提交助记词、交易所 API 凭据、签名密钥、`.env` 文件、数据库或包含真实账户数据的日志。`private/`、`server/data/`、`releases/` 和本机构建产物已被 `.gitignore` 排除。`VITE_*` 环境变量会被打包进客户端，不能存放交易所 API 密钥或令牌。只读 API 凭据经 HTTPS 从 App 发送至服务器后仅保存在服务器，连接令牌保存在 App 本地。
 
 ## SafeTrade 服务
 
-本地执行 `npm run server`。默认监听 `127.0.0.1:8787`，从未纳入版本控制的 `private/safetrade.txt` 读取 API 凭据；也可通过 `SAFETRADE_CREDENTIAL_FILE` 指定路径。服务器部署文件位于 `deploy/`，指定独立的 `127.0.0.1:8788` 端口和 `pearlwallet.az1993.xyz` 专用 Nginx 虚拟主机，不改变其他服务的端口与配置。`deploy/.env` 的读取令牌与安卓 APK 内的令牌对应；令牌只保护只读接口，不可替代交易所 API 密钥的权限限制。更新清单在 `server/update.json`。
+本地执行 `npm run server` 前，设置 `PEARL_CREDENTIAL_KEY_FILE` 为一个仅服务进程可读取的文件，内容是随机 32 字节密钥的 Base64 编码；设置 `PEARL_DATA_DIR` 保存 SQLite 数据库。密钥文件丢失后，已保存的 SafeTrade 连接无法解密。默认只监听 `127.0.0.1:8787`。公开 `GET /api/safetrade` 只返回行情；`POST /api/safetrade/connection` 验证只读密钥并返回随机令牌；`GET/DELETE /api/safetrade/account` 需要令牌，分别读取 PRL、USDT 余额和撤销连接。
 
-部署顺序：先用 `deploy/nginx-pearlwallet-http.conf` 申请该域名证书；证书到位后使用 `deploy/nginx-pearlwallet-updates.conf` 单独上线版本检查和 APK 下载，静态文件放在 `/var/www/pearlwallet/api` 与 `/var/www/pearlwallet/releases`。SafeTrade 官方放行服务器 IP 后，确认 8788 空闲、把 `server/data` 及 `private/safetrade.txt` 授权给容器 UID 1000，再启动后端并换成 `deploy/nginx-pearlwallet.conf`。每次先执行 `nginx -t`，通过后才重载。发布 APK 时核对 `server/update.json` 的 SHA-256。
-
-**新服务器已上线版本服务。** `pearlwallet.az1993.xyz` 的 HTTPS、`/api/update` 和正式签名 APK 下载已从外网验证；证书自动续期的模拟运行通过。SafeTrade 官方要求通过工单放行新服务器静态 IP；获批前不启动行情与账户采集，也不会伪造 K 线。
+新服务器 `104.160.38.45` 使用 `deploy/install-api-runtime.sh` 安装独立的 Node 24 运行环境，以 `deploy/pearlwallet-api.service` 启动服务，只监听 `127.0.0.1:8788`；专用 Nginx 虚拟主机配置见 `deploy/nginx-pearlwallet.conf`。部署时先执行 `nginx -t`，通过后重载。服务端加密密钥位于 `/var/lib/pearlwallet/credential-key`，不上传到仓库。SafeTrade 已放行该服务器 IP，HTTPS 行情、盘口、市场成交和只读账户连接均已实测成功。
 
 ## 已知限制
 

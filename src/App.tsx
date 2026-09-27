@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
 import { App as NativeApp } from "@capacitor/app";
 import QRCode from "qrcode";
@@ -15,24 +15,12 @@ import { broadcastPearlTx } from "./lib/rpc";
 import { prepareSend, type SendPreview } from "./lib/send";
 import type { EncryptedWallet } from "./lib/keystore";
 import { BIOMETRIC_ADDRESS_KEY, loadProfiles, profileName, saveProfiles, type ProfileStore, type WalletProfile } from "./lib/profiles";
+import { clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadMarket, savedConnectionToken, saveConnectionToken, type AccountData, type MarketData } from "./lib/safetrade";
 
 type Tab = "wallet" | "safetrade" | "setting";
 type WalletPage = "home" | "send" | "receive" | "history";
-type ExchangeData = {
-  price: number | null;
-  candles: { time: number; open: number; high: number; low: number; close: number; volume: number; empty: boolean }[];
-  balances: { PRL: { available: string; locked: string } | null; USDT: { available: string; locked: string } | null };
-  lastTradeAt: number | null;
-  accountUpdatedAt: number | null;
-  marketError: string | null;
-  accountError: string | null;
-  stats24h: { high: number | null; low: number | null; volume: number; turnover: number; changePercent: number | null };
-};
-
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.10";
-const API_URL = import.meta.env.VITE_SAFETRADE_API_URL || "https://pearlwallet.az1993.xyz/api/safetrade";
-const READ_TOKEN = import.meta.env.VITE_SAFETRADE_READ_TOKEN || "";
+const APP_VERSION = "0.2.11";
 type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
@@ -68,7 +56,7 @@ function Field({ label, value, onChange, type = "text", placeholder, autoComplet
   return <label className="field"><span>{label}</span><input value={value} onChange={(event) => onChange(event.target.value)} type={type} placeholder={placeholder} autoComplete={autoComplete} /></label>;
 }
 
-function CandleChart({ candles }: { candles: ExchangeData["candles"] }) {
+function CandleChart({ candles }: { candles: MarketData["candles"] }) {
   const data = candles.slice(-120);
   const real = data.filter((item) => Number.isFinite(item.high) && Number.isFinite(item.low));
   if (!real.length) return <div className="chart-empty">暂无成交数据</div>;
@@ -77,7 +65,8 @@ function CandleChart({ candles }: { candles: ExchangeData["candles"] }) {
   const span = Math.max(high - low, high * 0.003);
   const y = (value: number) => 240 - ((value - low) / span) * 210;
   const maxVolume = Math.max(1, ...data.map((item) => item.volume));
-  const width = 640 / data.length;
+  const chartWidth = 565;
+  const width = chartWidth / data.length;
   function movingAverage(index: number, period: number) {
     if (index < period - 1) return null;
     const values = data.slice(index - period + 1, index + 1).map((item) => item.close);
@@ -90,8 +79,8 @@ function CandleChart({ candles }: { candles: ExchangeData["candles"] }) {
   return <div className="chart-shell">
     <div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div>
     <svg viewBox="0 0 640 355" preserveAspectRatio="none" role="img" aria-label="PRL USDT K 线">
-      {[0, 1, 2, 3, 4].map((line) => <line key={line} x1="0" x2="640" y1={30 + line * 52} y2={30 + line * 52} className="chart-grid" />)}
-      <line x1="0" x2="640" y1="270" y2="270" className="chart-grid" />
+      {[0, 1, 2, 3, 4].map((line) => <g key={line}><line x1="0" x2={chartWidth} y1={30 + line * 52} y2={30 + line * 52} className="chart-grid" /><text x="572" y={34 + line * 52} className="chart-price-label">{(low + span * (240 - (30 + line * 52)) / 210).toFixed(4)}</text></g>)}
+      <line x1="0" x2={chartWidth} y1="270" y2="270" className="chart-grid" />
       {data.map((item, index) => {
         const x = index * width + width / 2;
         const up = item.close >= item.open;
@@ -105,6 +94,26 @@ function CandleChart({ candles }: { candles: ExchangeData["candles"] }) {
     </svg>
     <div className="chart-axis"><span>{new Date(data[0]!.time * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span><span>{new Date(data.at(-1)!.time * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span></div>
   </div>;
+}
+
+function marketNumber(value: number | null | undefined, digits = 4) {
+  return value == null || !Number.isFinite(value) ? "—" : value.toLocaleString("en-US", { maximumFractionDigits: digits });
+}
+
+function compactMarketNumber(value: number | null | undefined) {
+  return value == null || !Number.isFinite(value) ? "—" : new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(value);
+}
+
+function OrderBook({ depth }: { depth: MarketData["depth"] | undefined }) {
+  const asks = [...(depth?.asks ?? [])].reverse();
+  const bids = depth?.bids ?? [];
+  const max = Math.max(1, ...asks.map((level) => level.amount), ...bids.map((level) => level.amount));
+  const row = (level: { price: number; amount: number }, side: "ask" | "bid") => <div className={`book-row ${side}`} key={`${side}-${level.price}`} style={{ "--book-fill": `${Math.min(100, level.amount / max * 100)}%` } as CSSProperties}><span>{marketNumber(level.price, 8)}</span><span>{marketNumber(level.amount, 4)}</span><span>{marketNumber(level.price * level.amount, 2)}</span></div>;
+  return <div className="book"><div className="book-labels"><span>价格 (USDT)</span><span>数量 (PRL)</span><span>合计 (USDT)</span></div>{asks.length || bids.length ? <><div className="book-half">{asks.map((level) => row(level, "ask"))}</div><div className="book-spread">买卖价差 {asks.length && bids.length ? marketNumber(asks.at(-1)!.price - bids[0]!.price, 8) : "—"} USDT</div><div className="book-half">{bids.map((level) => row(level, "bid"))}</div></> : <div className="market-empty">暂无盘口数据</div>}</div>;
+}
+
+function RecentTrades({ trades }: { trades: MarketData["trades"] | undefined }) {
+  return <div className="recent-trades"><div className="book-labels"><span>时间</span><span>价格 (USDT)</span><span>数量 (PRL)</span></div>{trades?.length ? trades.map((trade) => <div className="trade-row" key={trade.id}><span>{new Date(trade.time * 1000).toLocaleTimeString("zh-CN", { hour12: false })}</span><span className={trade.side === "buy" ? "positive" : "negative"}>{marketNumber(trade.price, 8)}</span><span>{marketNumber(trade.amount, 4)}</span></div>) : <div className="market-empty">暂无成交记录</div>}</div>;
 }
 
 export default function App() {
@@ -132,9 +141,16 @@ export default function App() {
   const snapshotFresh = !!snapshotKey && freshSnapshotKey === snapshotKey;
   const [snapshotError, setSnapshotError] = useState("");
   const [walletRefreshing, setWalletRefreshing] = useState(false);
-  const [exchange, setExchange] = useState<ExchangeData | null>(null);
+  const [exchange, setExchange] = useState<MarketData | null>(null);
   const [exchangeError, setExchangeError] = useState("");
+  const [account, setAccount] = useState<AccountData | null>(null);
+  const [accountError, setAccountError] = useState("");
+  const [connectionToken, setConnectionToken] = useState(savedConnectionToken);
+  const [safeKey, setSafeKey] = useState("");
+  const [safeSecret, setSafeSecret] = useState("");
+  const [connectingSafeTrade, setConnectingSafeTrade] = useState(false);
   const [interval, setIntervalValue] = useState<Interval>("1m");
+  const [marketDetails, setMarketDetails] = useState<"depth" | "trades">("depth");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -246,21 +262,47 @@ export default function App() {
 
   const refreshExchange = useCallback(async () => {
     try {
-      const url = `${API_URL}?interval=${interval}`;
-      let data: ExchangeData;
-      if (Capacitor.isNativePlatform()) {
-        const response = await CapacitorHttp.get({ url, headers: READ_TOKEN ? { Authorization: `Bearer ${READ_TOKEN}` } : {}, connectTimeout: 8000, readTimeout: 8000 });
-        if (response.status !== 200) throw new Error(`HTTP ${response.status}`);
-        data = response.data as ExchangeData;
-      } else {
-        const response = await fetch(url, { cache: "no-store", headers: READ_TOKEN ? { Authorization: `Bearer ${READ_TOKEN}` } : {}, signal: AbortSignal.timeout(8000) });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        data = await response.json() as ExchangeData;
-      }
-      setExchange(data);
+      setExchange(await loadMarket(interval));
       setExchangeError("");
     } catch { setExchangeError("行情服务暂不可用"); }
   }, [interval]);
+
+  const refreshSafeTradeAccount = useCallback(async () => {
+    if (!connectionToken) return;
+    try {
+      setAccount(await loadAccount(connectionToken));
+      setAccountError("");
+    } catch (cause) {
+      setAccountError(cause instanceof Error ? cause.message : "账户余额暂不可用");
+    }
+  }, [connectionToken]);
+
+  async function connectSafeTrade() {
+    if (!safeKey.trim() || !safeSecret.trim() || connectingSafeTrade) return;
+    setConnectingSafeTrade(true);
+    setAccountError("");
+    try {
+      const result = await connectAccount(safeKey.trim(), safeSecret.trim());
+      saveConnectionToken(result.token);
+      setConnectionToken(result.token);
+      setSafeKey("");
+      setSafeSecret("");
+      setAccount(await loadAccount(result.token));
+    } catch (cause) {
+      setAccountError(cause instanceof Error ? cause.message : "连接失败");
+    } finally { setConnectingSafeTrade(false); }
+  }
+
+  async function removeSafeTradeConnection() {
+    if (!connectionToken) return;
+    try {
+      await disconnectAccount(connectionToken);
+      clearConnectionToken();
+      setConnectionToken("");
+      setAccount(null);
+      setAccountError("");
+    } catch { setAccountError("断开连接失败，请重试"); }
+  }
 
   useEffect(() => {
     if (!addresses) return;
@@ -326,6 +368,13 @@ export default function App() {
     const timer = setInterval(refreshExchange, 10_000);
     return () => clearInterval(timer);
   }, [tab, refreshExchange]);
+
+  useEffect(() => {
+    if (tab !== "safetrade" || !connectionToken) return;
+    refreshSafeTradeAccount();
+    const timer = setInterval(refreshSafeTradeAccount, 30_000);
+    return () => clearInterval(timer);
+  }, [tab, connectionToken, refreshSafeTradeAccount]);
 
   useEffect(() => { biometric.status().then(setBiometricStatus).catch(() => {}); }, []);
 
@@ -725,15 +774,18 @@ export default function App() {
         {walletPage === "history" && <div className="history-list">{!visibleActivities.length && <div className="empty-card">暂无链上交易</div>}{visibleActivities.map((item) => <div className="activity" key={item.txid}><span className="activity-icon"><Icon name={item.deltaGrains >= 0n ? "receive" : "send"} size={18} /></span><div><strong>{item.deltaGrains >= 0n ? "Received" : "Sent"}</strong><small>{projected?.staleTxids.has(item.txid.toLowerCase()) ? "待核对" : item.confirmations === 0 ? "待确认" : item.time ? new Date(item.time * 1000).toLocaleString("zh-CN") : "时间未知"}<br />{item.txid.slice(0, 16)}…</small></div><em className={item.deltaGrains >= 0n ? "positive" : "negative"}>{item.deltaGrains >= 0n ? "+" : ""}{formatPrl(item.deltaGrains)} PRL</em></div>)}</div>}
       </section>}
 
-      {tab === "safetrade" && <section className="trade-page"><div className="pair-head"><h1>PRL/USDT</h1><span>SafeTrade</span></div>
-        <div className="market-summary"><div className="market-last"><strong>{exchange?.price ? exchange.price.toFixed(6) : "—"}</strong><span>USDT <em className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{exchange?.stats24h?.changePercent == null ? "" : `${exchange.stats24h.changePercent >= 0 ? "+" : ""}${exchange.stats24h.changePercent.toFixed(2)}%`}</em></span></div><div className="market-stats"><div><span>24h 最高</span><strong>{exchange?.stats24h?.high?.toFixed(6) ?? "—"}</strong></div><div><span>24h 最低</span><strong>{exchange?.stats24h?.low?.toFixed(6) ?? "—"}</strong></div><div><span>24h 成交量</span><strong>{exchange?.stats24h?.volume?.toFixed(2) ?? "—"}</strong></div></div></div>
+      {tab === "safetrade" && <section className="trade-page">
+        <div className="pair-head"><div><h1>PRL/USDT</h1><small>SafeTrade · 现货行情</small></div><button className="market-refresh" aria-label="刷新行情" onClick={refreshExchange}><Icon name="refresh" size={19} /></button></div>
+        <div className="market-summary"><div className="market-last"><strong className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{marketNumber(exchange?.price, 8)}</strong><span>USDT <em className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{exchange?.stats24h?.changePercent == null ? "" : `${exchange.stats24h.changePercent >= 0 ? "+" : ""}${exchange.stats24h.changePercent.toFixed(2)}%`}</em></span></div><div className="market-stats"><div><span>24h 最高</span><strong>{marketNumber(exchange?.stats24h?.high, 8)}</strong></div><div><span>24h 最低</span><strong>{marketNumber(exchange?.stats24h?.low, 8)}</strong></div><div><span>24h 成交量</span><strong>{compactMarketNumber(exchange?.stats24h?.volume)} PRL</strong></div><div><span>24h 成交额</span><strong>{compactMarketNumber(exchange?.stats24h?.turnover)} USDT</strong></div></div></div>
         <div className="intervals">{INTERVALS.map((option) => <button key={option.id} className={interval === option.id ? "active" : ""} onClick={() => setIntervalValue(option.id)}>{option.label}</button>)}</div>
         <div className="chart-card"><CandleChart candles={exchange?.candles ?? []} /></div>
         {exchangeError && <div className="inline-error">{exchangeError}<button onClick={refreshExchange}>重试</button></div>}
         {exchange?.marketError && <div className="inline-error">{exchange.marketError}</div>}
-        <div className="section-heading"><h2>账户余额</h2><span className="muted">SafeTrade</span></div>
-        <div className="exchange-balances">{(["PRL", "USDT"] as const).map((asset) => <div className="asset-card" key={asset}><span className="asset-symbol">{asset === "PRL" ? "◉" : "$"}</span><div><strong>{asset}</strong><small>可用 {exchange?.balances[asset]?.available ?? "—"}</small></div><em>冻结 {exchange?.balances[asset]?.locked ?? "—"}</em></div>)}</div>
-        {exchange?.accountError && <div className="inline-error">{exchange.accountError}</div>}
+        <div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button></div>
+        {marketDetails === "depth" ? <OrderBook depth={exchange?.depth} /> : <RecentTrades trades={exchange?.trades} />}
+        <div className="section-heading"><h2>我的 SafeTrade 余额</h2>{connectionToken && <button className="text-inline" onClick={refreshSafeTradeAccount}>刷新</button>}</div>
+        {connectionToken ? <><div className="exchange-balances">{(["PRL", "USDT"] as const).map((asset) => <div className="asset-card" key={asset}><span className="asset-symbol">{asset === "PRL" ? "◉" : "$"}</span><div><strong>{asset}</strong><small>可用 {account?.balances[asset].available ?? "—"}</small></div><em>冻结 {account?.balances[asset].locked ?? "—"}</em></div>)}</div><button className="text-button" onClick={removeSafeTradeConnection}>断开 SafeTrade 连接</button></> : <form className="safetrade-connect" onSubmit={(event) => { event.preventDefault(); void connectSafeTrade(); }}><Field label="只读 API Key" value={safeKey} onChange={setSafeKey} autoComplete="off" /><Field label="API Secret" value={safeSecret} onChange={setSafeSecret} type="password" autoComplete="off" /><button className="primary" disabled={connectingSafeTrade || !safeKey.trim() || !safeSecret.trim()}>{connectingSafeTrade ? "连接中…" : "连接 SafeTrade"}</button><p>密钥仅发送到 Pearl Wallet 服务器，用于读取 PRL 和 USDT 余额。</p></form>}
+        {accountError && <div className="inline-error">{accountError}</div>}
       </section>}
 
       {tab === "setting" && <section className="settings-page"><div className="page-title"><h1>Setting</h1></div>

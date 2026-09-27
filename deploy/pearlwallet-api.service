@@ -1,0 +1,28 @@
+[Unit]
+Description=Pearl Wallet SafeTrade data API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pearlwallet
+Group=pearlwallet
+WorkingDirectory=/opt/pearlwallet/current
+ExecStart=/opt/pearlwallet/node-v24.17.0/bin/node server/index.mjs
+Environment=PEARL_SERVER_HOST=127.0.0.1
+Environment=PEARL_SERVER_PORT=8788
+Environment=PEARL_DATA_DIR=/var/lib/pearlwallet
+Environment=PEARL_CREDENTIAL_KEY_FILE=/var/lib/pearlwallet/credential-key
+Environment=PEARL_UPDATE_FILE=/var/www/pearlwallet/api/update.json
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/pearlwallet
+CapabilityBoundingSet=
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

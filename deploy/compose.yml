@@ -11,10 +11,10 @@ services:
     ports:
       - "127.0.0.1:8788:8787"
     environment:
-      PEARL_READ_TOKEN: ${PEARL_READ_TOKEN}
+      PEARL_CREDENTIAL_KEY_FILE: /run/secrets/credential-key
     volumes:
       - ../server/data:/data
-      - ../private/safetrade.txt:/run/secrets/safetrade.txt:ro
+      - ../private/credential-key:/run/secrets/credential-key:ro
     read_only: true
     tmpfs:
       - /tmp
