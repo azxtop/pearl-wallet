@@ -21,7 +21,7 @@ import { screenPrivacy } from "./lib/screen-privacy";
 type Tab = "wallet" | "safetrade" | "setting";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.15";
+const APP_VERSION = "0.2.16";
 type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
@@ -64,10 +64,13 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
   const [selectedY, setSelectedY] = useState<number | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ x: number; y: number; offset: number; count: number; distance: number; mode: "pending" | "pan" | "inspect" | "pinch"; timer: ReturnType<typeof setTimeout> | null } | null>(null);
-  const rightPadding = Math.max(4, Math.round(visibleCount * .12));
+  const baseRightPadding = Math.max(4, Math.round(visibleCount * .12));
+  const futureLimit = (count: number) => count - Math.max(4, Math.round(count * .12)) - 1;
+  const maxExtraFutureSlots = futureLimit(visibleCount);
+  const rightPadding = baseRightPadding + Math.min(maxExtraFutureSlots, Math.max(0, -offset));
   const filledSlots = visibleCount - rightPadding;
-  const maxOffset = Math.max(0, candles.length - filledSlots);
-  const end = candles.length - Math.min(offset, maxOffset);
+  const maxOffset = Math.max(0, candles.length - (visibleCount - baseRightPadding));
+  const end = candles.length - Math.min(Math.max(0, offset), maxOffset);
   const data = candles.slice(Math.max(0, end - filledSlots), end);
   useEffect(() => {
     const dismiss = (event: PointerEvent) => {
@@ -88,7 +91,7 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
   const width = chartWidth / visibleCount;
   const selectedIndex = selected ? data.findIndex((item) => item.time === selected.time) : -1;
   const selectedX = selectedIndex >= 0 ? (selectedIndex + .5) * width : 0;
-  const gridTimes = [1, 2, 3].map((part) => ({ x: 160 * part, candle: data[Math.min(data.length - 1, Math.floor(visibleCount * part / 4))] }));
+  const gridTimes = [1, 2, 3].map((part) => ({ x: 160 * part, candle: data[Math.floor(visibleCount * part / 4)] }));
   const timeLabel = (time: number) => new Date(time * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   function movingAverage(index: number, period: number) {
     const globalIndex = Math.max(0, end - filledSlots) + index;
@@ -140,7 +143,7 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
       if (current.distance > 0 && distance > 0) {
         const count = Math.max(20, Math.min(200, Math.round(current.count * current.distance / distance)));
         setVisibleCount(count);
-        setOffset(Math.max(0, Math.min(candles.length - (count - Math.max(4, Math.round(count * .12))), current.offset + Math.round((current.count - count) / 2))));
+        setOffset(Math.max(-futureLimit(count), Math.min(Math.max(0, candles.length - (count - Math.max(4, Math.round(count * .12)))), current.offset + Math.round((current.count - count) / 2))));
       }
       return;
     }
@@ -155,7 +158,7 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
       setSelectedTime(null);
     }
     const candlePixels = event.currentTarget.getBoundingClientRect().width / current.count;
-    setOffset(Math.max(0, Math.min(candles.length - filledSlots, current.offset + Math.round(dx / candlePixels))));
+    setOffset(Math.max(-maxExtraFutureSlots, Math.min(maxOffset, current.offset + Math.round(dx / candlePixels))));
   }
   function endPointer(event: React.PointerEvent<SVGSVGElement>) {
     if (!pointers.current.has(event.pointerId)) return;
@@ -172,7 +175,7 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
     gesture.current = null;
   }
   return <div className="chart-shell">
-    <div className="chart-toolbar"><div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div>{offset > 0 && <button className="chart-latest" onClick={() => setOffset(0)}>最新</button>}</div>
+    <div className="chart-toolbar"><div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div>{offset !== 0 && <button className="chart-latest" onClick={() => setOffset(0)}>最新</button>}</div>
     <div className="chart-stage"><svg viewBox="0 0 640 355" preserveAspectRatio="none" role="img" aria-label="PRL USDT K 线" onPointerDown={beginPointer} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer} onWheel={(event) => { if (event.ctrlKey) { setVisibleCount((count) => Math.max(20, Math.min(200, count + (event.deltaY > 0 ? 10 : -10)))); } }}>
       {[0, 1, 2, 3, 4].map((line) => <line key={line} x1="0" x2="640" y1={30 + line * 52} y2={30 + line * 52} className="chart-grid" />)}
       {gridTimes.map(({ x }) => <line key={x} x1={x} x2={x} y1="0" y2="355" className="chart-grid" />)}
@@ -191,7 +194,7 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
       <rect x="0" y="0" width="640" height="355" fill="transparent" pointerEvents="all" />
     </svg>
     {[0, 1, 2, 3, 4].map((line) => <span key={line} className="chart-price-label" style={{ top: `${(26 + line * 52) / 355 * 100}%` }}>{(low + span * (240 - (30 + line * 52)) / 210).toFixed(4)}</span>)}
-    {gridTimes.map(({ x, candle }) => <span key={x} className="chart-time-label" style={{ left: `${x / 640 * 100}%` }}>{timeLabel(candle!.time)}</span>)}
+    {gridTimes.filter(({ candle }) => candle).map(({ x, candle }) => <span key={x} className="chart-time-label" style={{ left: `${x / 640 * 100}%` }}>{timeLabel(candle!.time)}</span>)}
     {selected && <div className={`chart-detail-popup ${selectedX > 320 ? "on-left" : "on-right"}`}><div>时间 <strong>{timeLabel(selected.time)}</strong></div><div>开 <strong>{marketNumber(selected.open, 8)}</strong></div><div>高 <strong>{marketNumber(selected.high, 8)}</strong></div><div>低 <strong>{marketNumber(selected.low, 8)}</strong></div><div>收 <strong>{marketNumber(selected.close, 8)}</strong></div><div>涨跌 <strong className={selected.close >= selected.open ? "positive" : "negative"}>{marketNumber(selected.close - selected.open, 8)}</strong></div><div>量 <strong>{compactMarketNumber(selected.volume)} PRL</strong></div></div>}
     </div>
   </div>;
