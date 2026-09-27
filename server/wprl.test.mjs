@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { normalizeWprlCandles, parseSwap, SWAP_TOPIC, WPRL_POOL } from './wprl.mjs';
+import { aggregateWprlCandles, normalizeWprlCandles, parseSwap, SWAP_TOPIC, WPRL_POOL } from './wprl.mjs';
 
 const word = (value) => (value < 0n ? (1n << 256n) + value : value).toString(16).padStart(64, '0');
 
@@ -25,4 +25,15 @@ test('pool OHLCV keeps chronological 1-minute candles', () => {
   const rows = normalizeWprlCandles(payload, '1m');
   assert.deepEqual(rows.map((row) => row.time), [60, 120]);
   assert.equal(rows[1].close, 1.25);
+});
+
+test('minute candles can provide a usable hourly fallback during upstream rate limits', () => {
+  const rows = [
+    { time: 3600, open: 1, high: 1.3, low: 0.9, close: 1.2, volume: 2, empty: false },
+    { time: 3660, open: 1.2, high: 1.4, low: 1.1, close: 1.3, volume: 3, empty: false },
+    { time: 7200, open: 1.3, high: 1.5, low: 1.2, close: 1.4, volume: 4, empty: false },
+  ];
+  const result = aggregateWprlCandles(rows, '1h');
+  assert.equal(result.length, 2);
+  assert.deepEqual(result[0], { time: 3600, open: 1, high: 1.4, low: 0.9, close: 1.3, volume: 5, empty: false });
 });

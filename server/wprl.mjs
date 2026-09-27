@@ -1,4 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
+import { writeFile, rename } from 'node:fs/promises';
 import { WebSocket } from 'ws';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex } from '@noble/hashes/utils';
@@ -33,6 +35,24 @@ export function normalizeWprlCandles(payload, interval) {
   return payload.data.attributes.ohlcv_list.map(normalizeCandle).filter(Boolean).sort((a, b) => a.time - b.time).slice(-300);
 }
 
+export function aggregateWprlCandles(candles, interval) {
+  if (!PERIODS[interval]) throw new Error('Unsupported interval');
+  const period = PERIODS[interval] * 60;
+  const grouped = [];
+  for (const candle of candles) {
+    const time = Math.floor(candle.time / period) * period;
+    const last = grouped.at(-1);
+    if (last?.time === time) {
+      last.high = Math.max(last.high, candle.high);
+      last.low = Math.min(last.low, candle.low);
+      last.close = candle.close;
+      last.volume += candle.volume;
+      last.empty = last.empty && candle.empty;
+    } else grouped.push({ ...candle, time });
+  }
+  return grouped.slice(-300);
+}
+
 function normalizeGeckoTrade(row) {
   const item = row?.attributes;
   if (!item || (item.kind !== 'buy' && item.kind !== 'sell')) return null;
@@ -56,11 +76,12 @@ export function readInfuraKeys(path) {
   } finally { db.close(); }
 }
 
-export function createWprlFeed({ keyDbPath = '', onFrame = () => {}, fetcher = fetch } = {}) {
+export function createWprlFeed({ keyDbPath = '', cachePath = '', onFrame = () => {}, fetcher = fetch } = {}) {
   const keys = readInfuraKeys(keyDbPath);
   let nextKey = 0;
   const cooling = new Map();
   const series = new Map();
+  const geckoCache = new Map();
   const blockTimes = new Map();
   const seen = new Set();
   let overview = null;
@@ -73,6 +94,31 @@ export function createWprlFeed({ keyDbPath = '', onFrame = () => {}, fetcher = f
   let reconnect = null;
   let stopped = false;
   let polling = false;
+  let geckoCooldownUntil = 0;
+  let persistTimer = null;
+
+  if (cachePath) {
+    try {
+      const saved = JSON.parse(readFileSync(cachePath, 'utf8'));
+      if (saved.overview?.pair === 'WPRL/USDT') {
+        overview = saved.overview;
+        overviewAt = Number(saved.overview.updatedAt) || 0;
+      }
+      for (const [interval, value] of Object.entries(saved.series || {})) {
+        if (FRAMES[interval] && Array.isArray(value?.candles)) series.set(interval, { value, at: Number(value.updatedAt) || 0 });
+      }
+    } catch { /* Start with empty public market data. */ }
+  }
+
+  function persist() {
+    if (!cachePath || persistTimer) return;
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      const snapshot = JSON.stringify({ overview, series: Object.fromEntries([...series].filter(([, entry]) => entry.value).map(([key, entry]) => [key, entry.value])) });
+      void writeFile(`${cachePath}.tmp`, snapshot, { mode: 0o600 })
+        .then(() => rename(`${cachePath}.tmp`, cachePath)).catch(() => {});
+    }, 2000);
+  }
 
   function pickKey() {
     if (!keys.length) throw new Error('Infura keys unavailable');
@@ -103,10 +149,33 @@ export function createWprlFeed({ keyDbPath = '', onFrame = () => {}, fetcher = f
     throw failure || new Error('RPC unavailable');
   }
 
-  async function gecko(path) {
-    const response = await fetcher(`${GECKO_BASE}${path}`, { headers: { Accept: 'application/json', 'User-Agent': 'PearlWallet/0.2' }, signal: AbortSignal.timeout(12_000) });
-    if (!response.ok) throw new Error(`GeckoTerminal ${response.status}`);
-    return response.json();
+  async function gecko(path, ttl) {
+    const cached = geckoCache.get(path);
+    if (cached?.value && Date.now() - cached.at < ttl) return cached;
+    if (cached?.pending) return cached.value ? cached : cached.pending;
+    if (Date.now() < geckoCooldownUntil) {
+      if (cached?.value) return cached;
+      throw new Error('GeckoTerminal cooling down');
+    }
+    const pending = (async () => {
+      const response = await fetcher(`${GECKO_BASE}${path}`, { headers: { Accept: 'application/json', 'User-Agent': 'PearlWallet/0.2' }, signal: AbortSignal.timeout(12_000) });
+      if (response.status === 429) {
+        const retry = Number(response.headers?.get?.('Retry-After'));
+        geckoCooldownUntil = Date.now() + (Number.isFinite(retry) && retry > 0 ? Math.min(retry, 300) * 1000 : 60_000);
+      }
+      if (!response.ok) throw new Error(`GeckoTerminal ${response.status}`);
+      const value = await response.json();
+      const entry = { value, at: Date.now() };
+      geckoCache.set(path, entry);
+      return entry;
+    })().catch((error) => {
+      if (cached?.value) geckoCache.set(path, { value: cached.value, at: cached.at });
+      else geckoCache.delete(path);
+      if (cached?.value) return cached;
+      throw error;
+    });
+    geckoCache.set(path, { ...cached, pending });
+    return cached?.value ? cached : pending;
   }
 
   function candlePath(interval) {
@@ -119,7 +188,7 @@ export function createWprlFeed({ keyDbPath = '', onFrame = () => {}, fetcher = f
     const cached = series.get(interval);
     if (cached?.value && Date.now() - cached.at < 30_000) return cached.value;
     if (cached?.pending) return cached.value || cached.pending;
-    const pending = gecko(candlePath(interval)).then((payload) => {
+    const pending = gecko(candlePath(interval), interval === '1m' ? 30_000 : interval === '1h' ? 300_000 : 120_000).then(({ value: payload, at }) => {
       const candles = normalizeWprlCandles(payload, interval);
       if (latestTrade && candles.length) {
         const time = Math.floor(latestTrade.time / (PERIODS[interval] * 60)) * PERIODS[interval] * 60;
@@ -127,12 +196,18 @@ export function createWprlFeed({ keyDbPath = '', onFrame = () => {}, fetcher = f
         if (time === last.time) candles[candles.length - 1] = { ...last, high: Math.max(last.high, latestTrade.price), low: Math.min(last.low, latestTrade.price), close: latestTrade.price, empty: false };
         else if (time > last.time) candles.push({ time, open: latestTrade.price, high: latestTrade.price, low: latestTrade.price, close: latestTrade.price, volume: latestTrade.turnover, empty: false });
       }
-      const value = { interval, candles: candles.slice(-300), updatedAt: Date.now() };
-      series.set(interval, { value, at: Date.now() });
+      const value = { interval, candles: candles.slice(-300), updatedAt: at };
+      series.set(interval, { value, at });
+      persist();
       return value;
     }).catch((error) => {
-      series.set(interval, { value: cached?.value, at: Date.now() - 15_000 });
+      const source = interval === '4h' || interval === '1d'
+        ? series.get('1h')?.value || series.get('1m')?.value : series.get('1m')?.value;
+      const fallback = source?.candles?.length ? { interval, candles: aggregateWprlCandles(source.candles, interval), updatedAt: source.updatedAt } : null;
+      series.set(interval, { value: cached?.value || fallback, at: Date.now() - 15_000 });
+      if (fallback) persist();
       if (cached?.value) return cached.value;
+      if (fallback) return fallback;
       throw error;
     });
     series.set(interval, { ...cached, pending });
@@ -144,13 +219,13 @@ export function createWprlFeed({ keyDbPath = '', onFrame = () => {}, fetcher = f
     if (overviewPending) return overview || overviewPending;
     overviewPending = (async () => {
       const [pool, trades, hourly] = await Promise.allSettled([
-        gecko(''), gecko('/trades?trade_volume_in_usd_greater_than=0'),
-        gecko('/ohlcv/hour?aggregate=1&limit=24&currency=token&token=base'),
+        gecko('', 30_000), gecko('/trades?trade_volume_in_usd_greater_than=0', 300_000),
+        gecko('/ohlcv/hour?aggregate=1&limit=300&currency=token&token=base', 300_000),
       ]);
       if (pool.status === 'rejected' && !overview) throw new Error('WPRL market unavailable');
-      const attr = pool.status === 'fulfilled' ? pool.value?.data?.attributes : null;
-      const recent = trades.status === 'fulfilled' ? trades.value?.data?.map(normalizeGeckoTrade).filter(Boolean) || [] : [];
-      const candles24h = hourly.status === 'fulfilled' ? normalizeWprlCandles(hourly.value, '1h') : [];
+      const attr = pool.status === 'fulfilled' ? pool.value.value?.data?.attributes : null;
+      const recent = trades.status === 'fulfilled' ? trades.value.value?.data?.map(normalizeGeckoTrade).filter(Boolean) || overview?.trades || [] : overview?.trades || [];
+      const candles24h = hourly.status === 'fulfilled' ? normalizeWprlCandles(hourly.value.value, '1h').slice(-24) : [];
       const price = number(attr?.base_token_price_quote_token) ?? overview?.price ?? null;
       const turnover = number(attr?.volume_usd?.h24);
       const rpcTrade = latestTrade && latestTrade.time > Date.now() / 1000 - 120 ? latestTrade : null;
@@ -161,14 +236,15 @@ export function createWprlFeed({ keyDbPath = '', onFrame = () => {}, fetcher = f
         stats24h: {
           high: candles24h.length ? Math.max(...candles24h.map((item) => item.high)) : overview?.stats24h?.high ?? null,
           low: candles24h.length ? Math.min(...candles24h.map((item) => item.low)) : overview?.stats24h?.low ?? null,
-          volume: price && turnover ? turnover / price : null, turnover: turnover ?? overview?.stats24h?.turnover ?? null,
+          volume: price && turnover ? turnover / price : overview?.stats24h?.volume ?? null, turnover: turnover ?? overview?.stats24h?.turnover ?? null,
           changePercent: number(attr?.price_change_percentage?.h24) ?? overview?.stats24h?.changePercent ?? null,
         },
-        depth: { asks: [], bids: [] }, trades: combined, liquidityUsd: number(attr?.reserve_in_usd),
+        depth: { asks: [], bids: [] }, trades: combined, liquidityUsd: number(attr?.reserve_in_usd) ?? overview?.liquidityUsd ?? null,
         marketError: pool.status === 'rejected' || trades.status === 'rejected' || hourly.status === 'rejected' ? '部分链上行情暂不可用' : null,
-        updatedAt: Date.now(),
+        updatedAt: rpcTrade ? rpcTrade.time * 1000 : pool.status === 'fulfilled' ? pool.value.at : overview?.updatedAt ?? Date.now(),
       };
       overviewAt = Date.now();
+      persist();
       onFrame({ type: 'overview', data: overview });
       return overview;
     })().finally(() => { overviewPending = null; });
@@ -197,6 +273,7 @@ export function createWprlFeed({ keyDbPath = '', onFrame = () => {}, fetcher = f
     if (overview) {
       overview = { ...overview, price: latestTrade.price, trades: [trade, ...overview.trades.filter((item) => item.id !== id)].sort((a, b) => b.time - a.time).slice(0, 20), updatedAt: Date.now() };
       overviewAt = Date.now();
+      persist();
       onFrame({ type: 'overview-patch', data: { price: overview.price, trades: overview.trades, updatedAt: overview.updatedAt } });
     }
     for (const [interval, entry] of series) {
@@ -212,6 +289,7 @@ export function createWprlFeed({ keyDbPath = '', onFrame = () => {}, fetcher = f
       else { candles.push(candle); if (candles.length > 300) candles.shift(); }
       const value = { interval, candles, updatedAt: Date.now() };
       series.set(interval, { value, at: entry.at });
+      persist();
       onFrame({ type: 'candle', interval, candle, updatedAt: value.updatedAt });
     }
   }
@@ -261,7 +339,7 @@ export function createWprlFeed({ keyDbPath = '', onFrame = () => {}, fetcher = f
       void getCandles('1m').catch(() => {});
       if (keys.length) { void poll(); timer = setInterval(poll, 15_000); connect(); }
     },
-    stop() { stopped = true; if (timer) clearInterval(timer); if (reconnect) clearTimeout(reconnect); socket?.close(); },
+    stop() { stopped = true; if (timer) clearInterval(timer); if (reconnect) clearTimeout(reconnect); if (persistTimer) clearTimeout(persistTimer); socket?.close(); },
     keyCount: keys.length,
   };
 }

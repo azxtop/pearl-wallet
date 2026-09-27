@@ -24,7 +24,7 @@ type Tab = "wallet" | "market" | "setting";
 type MarketSource = "safetrade" | "wprl";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.21";
+const APP_VERSION = "0.2.22";
 type Interval = MarketInterval;
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
@@ -261,8 +261,6 @@ export default function App() {
   const publicMarketRef = useRef(publicMarket);
   publicMarketRef.current = publicMarket;
   const [wprlMarket, setWprlMarket] = useState(loadWprlMarketCache);
-  const wprlMarketRef = useRef(wprlMarket);
-  wprlMarketRef.current = wprlMarket;
   const [wprlError, setWprlError] = useState("");
   const [wprlRefreshing, setWprlRefreshing] = useState(false);
   const wprlOverviewRequest = useRef<Promise<void> | null>(null);
@@ -826,21 +824,6 @@ export default function App() {
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "subscribe", interval }));
     void refreshWprlCandles(interval);
   }, [tab, marketSource, interval, refreshWprlCandles]);
-
-  useEffect(() => {
-    if (tab !== "market" || marketSource !== "wprl" || !wprlSeries) return;
-    let canceled = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        for (const other of MARKET_INTERVALS) {
-          if (canceled || document.hidden || other === interval || wprlMarketRef.current.series[other]) continue;
-          await refreshWprlCandles(other, false);
-          await new Promise((resolve) => setTimeout(resolve, 1200));
-        }
-      })();
-    }, 1000);
-    return () => { canceled = true; clearTimeout(timer); };
-  }, [tab, marketSource, interval, !!wprlSeries, refreshWprlCandles]);
 
   useEffect(() => {
     if (tab !== "market" || marketSource !== "safetrade" || !connectionToken) return;
