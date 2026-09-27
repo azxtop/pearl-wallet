@@ -220,6 +220,7 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .chart-current-line.up { stroke: var(--trade-green); }.chart-current-line.down { stroke: var(--trade-red); }
 .chart-current-price { position: absolute; right: 3px; z-index: 3; transform: translateY(-50%); padding: 3px 5px; border-radius: 2px; color: #fff; font-size: 11px; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; }
 .chart-current-price.up { background: var(--trade-green); }.chart-current-price.down { background: var(--trade-red); }
+.chart-inspect-price { position: absolute; right: 3px; z-index: 4; transform: translateY(-50%); padding: 3px 5px; border-radius: 2px; background: #171c1a; color: #fff; font-size: 11px; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; }
 .chart-time-label { position: absolute; top: 75.8%; transform: translateX(-50%); color: #929a9b; font-size: 10px; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
 .chart-crosshair line { stroke: #333b3a; stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
 .chart-crosshair circle { fill: #171c1a; stroke: #fff; stroke-width: 1; vector-effect: non-scaling-stroke; }

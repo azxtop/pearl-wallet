@@ -23,7 +23,7 @@ import { screenPrivacy } from "./lib/screen-privacy";
 type Tab = "wallet" | "safetrade" | "setting";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.19";
+const APP_VERSION = "0.2.20";
 type Interval = MarketInterval;
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
@@ -65,7 +65,7 @@ function CandleChart({ candles, currentPrice, loading = false, status = "" }: { 
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
   const [selectedY, setSelectedY] = useState<number | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const gesture = useRef<{ x: number; y: number; offset: number; count: number; distance: number; mode: "pending" | "pan" | "inspect" | "pinch"; timer: ReturnType<typeof setTimeout> | null } | null>(null);
+  const gesture = useRef<{ x: number; y: number; offset: number; count: number; distance: number; dismissOnTap: boolean; mode: "pending" | "pan" | "inspect" | "pinch"; timer: ReturnType<typeof setTimeout> | null } | null>(null);
   const viewport = chartWindow(candles.length, visibleCount, offset);
   const data = candles.slice(viewport.firstIndex, viewport.endIndex);
   useEffect(() => {
@@ -87,6 +87,8 @@ function CandleChart({ candles, currentPrice, loading = false, status = "" }: { 
   const low = Math.min(...real.map((item) => item.low), ...(latestPrice === undefined ? [] : [latestPrice]));
   const span = Math.max(high - low, high * 0.003);
   const y = (value: number) => 240 - ((value - low) / span) * 210;
+  const priceAtY = (position: number) => low + (240 - position) / 210 * span;
+  const priceDigits = Math.max(2, Math.min(8, Math.ceil(-Math.log10(span / 210))));
   const latestY = latestPrice === undefined ? null : y(latestPrice);
   const maxVolume = Math.max(1, ...data.map((item) => item.volume));
   const chartWidth = 640;
@@ -122,12 +124,12 @@ function CandleChart({ candles, currentPrice, loading = false, status = "" }: { 
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (gesture.current?.timer) clearTimeout(gesture.current.timer);
     if (pointers.current.size > 1) {
-      gesture.current = { x: event.clientX, y: event.clientY, offset, count: visibleCount, distance: pointerDistance(), mode: "pinch", timer: null };
+      gesture.current = { x: event.clientX, y: event.clientY, offset, count: visibleCount, distance: pointerDistance(), dismissOnTap: false, mode: "pinch", timer: null };
       setSelectedTime(null);
       return;
     }
     const svg = event.currentTarget;
-    const current = { x: event.clientX, y: event.clientY, offset, count: visibleCount, distance: 0, mode: "pending" as const, timer: null as ReturnType<typeof setTimeout> | null };
+    const current = { x: event.clientX, y: event.clientY, offset, count: visibleCount, distance: 0, dismissOnTap: selectedTime !== null, mode: "pending" as const, timer: null as ReturnType<typeof setTimeout> | null };
     gesture.current = current;
     current.timer = setTimeout(() => {
       if (gesture.current !== current || !pointers.current.has(event.pointerId)) return;
@@ -165,11 +167,14 @@ function CandleChart({ candles, currentPrice, loading = false, status = "" }: { 
   function endPointer(event: React.PointerEvent<SVGSVGElement>) {
     if (!pointers.current.has(event.pointerId)) return;
     if (gesture.current?.timer) clearTimeout(gesture.current.timer);
-    if (pointers.current.size === 1 && gesture.current?.mode === "pending") selectAt(event.clientX, event.clientY, event.currentTarget);
+    if (pointers.current.size === 1 && gesture.current?.mode === "pending") {
+      if (gesture.current.dismissOnTap) setSelectedTime(null);
+      else selectAt(event.clientX, event.clientY, event.currentTarget);
+    }
     pointers.current.delete(event.pointerId);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
     const remaining = [...pointers.current.values()][0];
-    gesture.current = remaining ? { x: remaining.x, y: remaining.y, offset, count: visibleCount, distance: 0, mode: "pan", timer: null } : null;
+    gesture.current = remaining ? { x: remaining.x, y: remaining.y, offset, count: visibleCount, distance: 0, dismissOnTap: false, mode: "pan", timer: null } : null;
   }
   function cancelPointer(event: React.PointerEvent<SVGSVGElement>) {
     if (gesture.current?.timer) clearTimeout(gesture.current.timer);
@@ -196,8 +201,9 @@ function CandleChart({ candles, currentPrice, loading = false, status = "" }: { 
       {selected && <g className="chart-crosshair"><line x1={selectedX} x2={selectedX} y1="0" y2="355" /><line x1="0" x2="640" y1={selectedY ?? y(selected.close)} y2={selectedY ?? y(selected.close)} /><circle cx={selectedX} cy={selectedY ?? y(selected.close)} r="3" /></g>}
       <rect x="0" y="0" width="640" height="355" fill="transparent" pointerEvents="all" />
     </svg>
-    {[0, 1, 2, 3, 4].filter((line) => latestY === null || Math.abs(latestY - (30 + line * 52)) > 13).map((line) => <span key={line} className="chart-price-label" style={{ top: `${(26 + line * 52) / 355 * 100}%` }}>{(low + span * (240 - (30 + line * 52)) / 210).toFixed(4)}</span>)}
-    {latestY !== null && <span className={`chart-current-price ${latestUp ? "up" : "down"}`} style={{ top: `${latestY / 355 * 100}%` }} aria-label={`当前价格 ${marketNumber(latestPrice, 8)} USDT`}>{marketNumber(latestPrice, 8)}</span>}
+    {[0, 1, 2, 3, 4].filter((line) => (latestY === null || Math.abs(latestY - (30 + line * 52)) > 13) && (!selected || Math.abs((selectedY ?? y(selected.close)) - (30 + line * 52)) > 13)).map((line) => <span key={line} className="chart-price-label" style={{ top: `${(26 + line * 52) / 355 * 100}%` }}>{(low + span * (240 - (30 + line * 52)) / 210).toFixed(4)}</span>)}
+    {latestY !== null && (!selected || Math.abs((selectedY ?? y(selected.close)) - latestY) > 17) && <span className={`chart-current-price ${latestUp ? "up" : "down"}`} style={{ top: `${latestY / 355 * 100}%` }} aria-label={`当前价格 ${marketNumber(latestPrice, 8)} USDT`}>{marketNumber(latestPrice, 8)}</span>}
+    {selected && <span className="chart-inspect-price" style={{ top: `${(selectedY ?? y(selected.close)) / 355 * 100}%` }} aria-label={`指针价格 ${priceAtY(selectedY ?? y(selected.close)).toFixed(priceDigits)} USDT`}>{priceAtY(selectedY ?? y(selected.close)).toFixed(priceDigits)}</span>}
     {gridTimes.filter(({ candle }) => candle).map(({ x, candle }) => <span key={x} className="chart-time-label" style={{ left: `${x / 640 * 100}%` }}>{timeLabel(candle!.time)}</span>)}
     {selected && <div className={`chart-detail-popup ${selectedX > 320 ? "on-left" : "on-right"}`}><div>时间 <strong>{timeLabel(selected.time)}</strong></div><div>开 <strong>{marketNumber(selected.open, 8)}</strong></div><div>高 <strong>{marketNumber(selected.high, 8)}</strong></div><div>低 <strong>{marketNumber(selected.low, 8)}</strong></div><div>收 <strong>{marketNumber(selected.close, 8)}</strong></div><div>涨跌 <strong className={selected.close >= selected.open ? "positive" : "negative"}>{marketNumber(selected.close - selected.open, 8)}</strong></div><div>量 <strong>{compactMarketNumber(selected.volume)} PRL</strong></div></div>}
     </div>
