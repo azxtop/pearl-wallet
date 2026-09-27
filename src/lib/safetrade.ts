@@ -11,6 +11,9 @@ export type MarketData = {
   updatedAt: number;
 };
 
+export type MarketOverview = Pick<MarketData, 'pair' | 'price' | 'stats24h' | 'depth' | 'trades' | 'marketError' | 'updatedAt'>;
+export type CandleSeries = Pick<MarketData, 'candles' | 'updatedAt'> & { interval: string };
+
 export type AccountData = {
   balances: { PRL: { available: string; locked: string }; USDT: { available: string; locked: string } };
   updatedAt: number;
@@ -39,6 +42,8 @@ async function request<T>(url: string, method = 'GET', data?: object, token?: st
 }
 
 export const loadMarket = (interval: string) => request<MarketData>(`${API_URL}?interval=${encodeURIComponent(interval)}`);
+export const loadMarketOverview = () => request<MarketOverview>(`${API_URL}/overview`);
+export const loadMarketCandles = (interval: string) => request<CandleSeries>(`${API_URL}/candles?interval=${encodeURIComponent(interval)}`);
 export const connectAccount = (key: string, secret: string) => request<{ token: string }>(`${API_URL}/connection`, 'POST', { key, secret });
 export const loadAccount = (token: string) => request<AccountData>(`${API_URL}/account`, 'GET', undefined, token);
 export const disconnectAccount = (token: string) => request<{ disconnected: boolean }>(`${API_URL}/account`, 'DELETE', undefined, token);

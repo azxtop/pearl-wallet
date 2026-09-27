@@ -51,6 +51,14 @@ test('public market never includes account data; connection token gates balances
     assert.equal(market.trades[0].side, 'buy');
     assert.equal(market.candles[0].volume, 2);
     assert.equal('balances' in market, false);
+    const overview = await (await fetch(`${base}/overview`)).json();
+    assert.equal(overview.price, 1.5);
+    assert.equal('candles' in overview, false);
+    const series = await (await fetch(`${base}/candles?interval=5m`)).json();
+    assert.equal(series.interval, '5m');
+    assert.equal(series.candles[0].volume, 2);
+    assert.equal('depth' in series, false);
+    assert.equal((await fetch(`${base}/candles?interval=bad`)).status, 400);
     assert.equal((await fetch(`${base}/account`)).status, 401);
     const connected = await fetch(`${base}/connection`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ key, secret }) });
     assert.equal(connected.status, 201);

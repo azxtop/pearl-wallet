@@ -15,14 +15,16 @@ import { broadcastPearlTx } from "./lib/rpc";
 import { prepareSend, type SendPreview } from "./lib/send";
 import type { EncryptedWallet } from "./lib/keystore";
 import { BIOMETRIC_ADDRESS_KEY, loadProfiles, profileName, saveProfiles, type ProfileStore, type WalletProfile } from "./lib/profiles";
-import { clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadMarket, savedConnectionToken, saveConnectionToken, type AccountData, type MarketData } from "./lib/safetrade";
+import { clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadMarketCandles, loadMarketOverview, savedConnectionToken, saveConnectionToken, type AccountData, type MarketData } from "./lib/safetrade";
+import { chartWindow } from "./lib/chart-window";
+import { loadPublicMarketCache, MARKET_INTERVALS, savePublicMarketCache, type MarketInterval } from "./lib/market-cache";
 import { screenPrivacy } from "./lib/screen-privacy";
 
 type Tab = "wallet" | "safetrade" | "setting";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.16";
-type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
+const APP_VERSION = "0.2.17";
+type Interval = MarketInterval;
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
   { id: "1h", label: "1小时" }, { id: "4h", label: "4小时" }, { id: "1d", label: "日线" },
@@ -57,21 +59,15 @@ function Field({ label, value, onChange, type = "text", placeholder, autoComplet
   return <label className="field"><span>{label}</span><input value={value} onChange={(event) => onChange(event.target.value)} type={type} placeholder={placeholder} autoComplete={autoComplete} /></label>;
 }
 
-function CandleChart({ candles }: { candles: MarketData["candles"] }) {
+function CandleChart({ candles, loading = false, status = "" }: { candles: MarketData["candles"]; loading?: boolean; status?: string }) {
   const [visibleCount, setVisibleCount] = useState(80);
   const [offset, setOffset] = useState(0);
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
   const [selectedY, setSelectedY] = useState<number | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ x: number; y: number; offset: number; count: number; distance: number; mode: "pending" | "pan" | "inspect" | "pinch"; timer: ReturnType<typeof setTimeout> | null } | null>(null);
-  const baseRightPadding = Math.max(4, Math.round(visibleCount * .12));
-  const futureLimit = (count: number) => count - Math.max(4, Math.round(count * .12)) - 1;
-  const maxExtraFutureSlots = futureLimit(visibleCount);
-  const rightPadding = baseRightPadding + Math.min(maxExtraFutureSlots, Math.max(0, -offset));
-  const filledSlots = visibleCount - rightPadding;
-  const maxOffset = Math.max(0, candles.length - (visibleCount - baseRightPadding));
-  const end = candles.length - Math.min(Math.max(0, offset), maxOffset);
-  const data = candles.slice(Math.max(0, end - filledSlots), end);
+  const viewport = chartWindow(candles.length, visibleCount, offset);
+  const data = candles.slice(viewport.firstIndex, viewport.endIndex);
   useEffect(() => {
     const dismiss = (event: PointerEvent) => {
       if (!(event.target instanceof Element) || !event.target.closest(".chart-stage svg")) setSelectedTime(null);
@@ -80,7 +76,7 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
     return () => { document.removeEventListener("pointerdown", dismiss); if (gesture.current?.timer) clearTimeout(gesture.current.timer); };
   }, []);
   const real = data.filter((item) => Number.isFinite(item.high) && Number.isFinite(item.low));
-  if (!real.length) return <div className="chart-empty">暂无成交数据</div>;
+  if (!real.length) return <div className="chart-empty">{loading ? "正在加载 K 线…" : "暂无成交数据"}</div>;
   const selected = selectedTime === null ? null : data.find((item) => item.time === selectedTime);
   const high = Math.max(...real.map((item) => item.high));
   const low = Math.min(...real.map((item) => item.low));
@@ -90,18 +86,18 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
   const chartWidth = 640;
   const width = chartWidth / visibleCount;
   const selectedIndex = selected ? data.findIndex((item) => item.time === selected.time) : -1;
-  const selectedX = selectedIndex >= 0 ? (selectedIndex + .5) * width : 0;
-  const gridTimes = [1, 2, 3].map((part) => ({ x: 160 * part, candle: data[Math.floor(visibleCount * part / 4)] }));
+  const selectedX = selectedIndex >= 0 ? (viewport.leftSlots + selectedIndex + .5) * width : 0;
+  const gridTimes = [1, 2, 3].map((part) => ({ x: 160 * part, candle: data[Math.floor(visibleCount * part / 4) - viewport.leftSlots] }));
   const timeLabel = (time: number) => new Date(time * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   function movingAverage(index: number, period: number) {
-    const globalIndex = Math.max(0, end - filledSlots) + index;
+    const globalIndex = viewport.firstIndex + index;
     if (globalIndex < period - 1) return null;
     const values = candles.slice(globalIndex - period + 1, globalIndex + 1).map((item) => item.close);
     return values.every(Number.isFinite) ? values.reduce((sum, value) => sum + value, 0) / period : null;
   }
   const maPath = (period: number) => data.map((_, index) => {
     const value = movingAverage(index, period);
-    return value === null ? "" : `${index === 0 || movingAverage(index - 1, period) === null ? "M" : "L"}${(index + .5) * width},${y(value)}`;
+    return value === null ? "" : `${index === 0 || movingAverage(index - 1, period) === null ? "M" : "L"}${(viewport.leftSlots + index + .5) * width},${y(value)}`;
   }).join(" ");
   function pointerDistance() {
     const [first, second] = [...pointers.current.values()];
@@ -110,7 +106,7 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
   function selectAt(clientX: number, clientY: number, svg: SVGSVGElement) {
     const rect = svg.getBoundingClientRect();
     const index = Math.floor((clientX - rect.left) / rect.width * visibleCount);
-    const candle = data[index];
+    const candle = data[index - viewport.leftSlots];
     if (!candle) { setSelectedTime(null); return; }
     setSelectedTime(candle.time);
     setSelectedY(Math.max(16, Math.min(260, (clientY - rect.top) / rect.height * 355)));
@@ -143,7 +139,7 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
       if (current.distance > 0 && distance > 0) {
         const count = Math.max(20, Math.min(200, Math.round(current.count * current.distance / distance)));
         setVisibleCount(count);
-        setOffset(Math.max(-futureLimit(count), Math.min(Math.max(0, candles.length - (count - Math.max(4, Math.round(count * .12)))), current.offset + Math.round((current.count - count) / 2))));
+        setOffset(chartWindow(candles.length, count, current.offset + Math.round((current.count - count) / 2)).offset);
       }
       return;
     }
@@ -158,7 +154,7 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
       setSelectedTime(null);
     }
     const candlePixels = event.currentTarget.getBoundingClientRect().width / current.count;
-    setOffset(Math.max(-maxExtraFutureSlots, Math.min(maxOffset, current.offset + Math.round(dx / candlePixels))));
+    setOffset(chartWindow(candles.length, current.count, current.offset + Math.round(dx / candlePixels)).offset);
   }
   function endPointer(event: React.PointerEvent<SVGSVGElement>) {
     if (!pointers.current.has(event.pointerId)) return;
@@ -175,13 +171,13 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
     gesture.current = null;
   }
   return <div className="chart-shell">
-    <div className="chart-toolbar"><div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div>{offset !== 0 && <button className="chart-latest" onClick={() => setOffset(0)}>最新</button>}</div>
+    <div className="chart-toolbar"><div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div><div className="chart-toolbar-actions">{status && <small>{status}</small>}{offset !== 0 && <button className="chart-latest" onClick={() => setOffset(0)}>最新</button>}</div></div>
     <div className="chart-stage"><svg viewBox="0 0 640 355" preserveAspectRatio="none" role="img" aria-label="PRL USDT K 线" onPointerDown={beginPointer} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer} onWheel={(event) => { if (event.ctrlKey) { setVisibleCount((count) => Math.max(20, Math.min(200, count + (event.deltaY > 0 ? 10 : -10)))); } }}>
       {[0, 1, 2, 3, 4].map((line) => <line key={line} x1="0" x2="640" y1={30 + line * 52} y2={30 + line * 52} className="chart-grid" />)}
       {gridTimes.map(({ x }) => <line key={x} x1={x} x2={x} y1="0" y2="355" className="chart-grid" />)}
       <line x1="0" x2="640" y1="270" y2="270" className="chart-grid" />
       {data.map((item, index) => {
-        const x = index * width + width / 2;
+        const x = (viewport.leftSlots + index + .5) * width;
         const up = item.close >= item.open;
         return <g key={item.time} className={item.empty ? "candle empty" : up ? "candle up" : "candle down"}>
           <line x1={x} x2={x} y1={y(item.high)} y2={y(item.low)} />
@@ -245,8 +241,12 @@ export default function App() {
   const snapshotFresh = !!snapshotKey && freshSnapshotKey === snapshotKey;
   const [snapshotError, setSnapshotError] = useState("");
   const [walletRefreshing, setWalletRefreshing] = useState(false);
-  const [exchange, setExchange] = useState<MarketData | null>(null);
-  const [exchangeError, setExchangeError] = useState("");
+  const [publicMarket, setPublicMarket] = useState(loadPublicMarketCache);
+  const publicMarketRef = useRef(publicMarket);
+  publicMarketRef.current = publicMarket;
+  const [overviewError, setOverviewError] = useState("");
+  const [candleError, setCandleError] = useState("");
+  const [marketRefreshing, setMarketRefreshing] = useState(false);
   const [account, setAccount] = useState<AccountData | null>(null);
   const [accountError, setAccountError] = useState("");
   const [connectionToken, setConnectionToken] = useState(savedConnectionToken);
@@ -254,6 +254,19 @@ export default function App() {
   const [safeSecret, setSafeSecret] = useState("");
   const [connectingSafeTrade, setConnectingSafeTrade] = useState(false);
   const [interval, setIntervalValue] = useState<Interval>("1m");
+  const activeInterval = useRef(interval);
+  activeInterval.current = interval;
+  const overviewRequest = useRef<Promise<void> | null>(null);
+  const candleRequests = useRef(new Map<Interval, Promise<void>>());
+  const currentSeries = publicMarket.series[interval];
+  const overview = publicMarket.overview;
+  const exchangeError = candleError || overviewError;
+  const exchange: MarketData | null = overview || currentSeries ? {
+    pair: "PRL/USDT", price: overview?.price ?? currentSeries?.candles.at(-1)?.close ?? null,
+    stats24h: overview?.stats24h ?? null, candles: currentSeries?.candles ?? [],
+    depth: overview?.depth ?? { asks: [], bids: [] }, trades: overview?.trades ?? [],
+    marketError: overview?.marketError ?? null, updatedAt: Math.max(overview?.updatedAt ?? 0, currentSeries?.updatedAt ?? 0),
+  } : null;
   const [marketDetails, setMarketDetails] = useState<"depth" | "trades">("depth");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -365,12 +378,48 @@ export default function App() {
     }
   }, []);
 
-  const refreshExchange = useCallback(async () => {
-    try {
-      setExchange(await loadMarket(interval));
-      setExchangeError("");
-    } catch { setExchangeError("行情服务暂不可用"); }
-  }, [interval]);
+  useEffect(() => { savePublicMarketCache(publicMarket); }, [publicMarket]);
+
+  const refreshOverview = useCallback(() => {
+    if (overviewRequest.current) return overviewRequest.current;
+    const started = performance.now();
+    const pending = loadMarketOverview().then((data) => {
+      setPublicMarket((previous) => !previous.overview || data.updatedAt > previous.overview.updatedAt
+        ? { ...previous, overview: data } : previous);
+      setOverviewError("");
+      console.debug(`SafeTrade overview ${Math.round(performance.now() - started)}ms`);
+    }).catch(() => setOverviewError("行情服务暂不可用")).finally(() => { overviewRequest.current = null; });
+    overviewRequest.current = pending;
+    return pending;
+  }, []);
+
+  const refreshCandles = useCallback((target: Interval, visible = true) => {
+    const existing = candleRequests.current.get(target);
+    if (existing) {
+      if (visible && target === activeInterval.current) setMarketRefreshing(true);
+      return existing;
+    }
+    if (visible && target === activeInterval.current) setMarketRefreshing(true);
+    const started = performance.now();
+    const pending = loadMarketCandles(target).then((series) => {
+      if (series.interval !== target) throw new Error("K 线周期不匹配");
+      setPublicMarket((previous) => !previous.series[target] || series.updatedAt > previous.series[target]!.updatedAt
+        ? { ...previous, series: { ...previous.series, [target]: series } } : previous);
+      if (target === activeInterval.current) setCandleError("");
+      console.debug(`SafeTrade ${target} candles ${Math.round(performance.now() - started)}ms`);
+    }).catch(() => { if (target === activeInterval.current) setCandleError("K 线暂不可用"); })
+      .finally(() => {
+        candleRequests.current.delete(target);
+        if (target === activeInterval.current) setMarketRefreshing(false);
+      });
+    candleRequests.current.set(target, pending);
+    return pending;
+  }, []);
+
+  const refreshExchange = useCallback(() => {
+    void refreshOverview();
+    void refreshCandles(activeInterval.current);
+  }, [refreshOverview, refreshCandles]);
 
   const refreshSafeTradeAccount = useCallback(async () => {
     if (!connectionToken) return;
@@ -475,10 +524,33 @@ export default function App() {
 
   useEffect(() => {
     if (tab !== "safetrade") return;
-    refreshExchange();
-    const timer = setInterval(refreshExchange, 5_000);
+    void refreshOverview();
+    const timer = setInterval(() => { if (!document.hidden) void refreshOverview(); }, 5_000);
     return () => clearInterval(timer);
-  }, [tab, refreshExchange]);
+  }, [tab, refreshOverview]);
+
+  useEffect(() => {
+    if (tab !== "safetrade") return;
+    setCandleError("");
+    void refreshCandles(interval);
+    const timer = setInterval(() => { if (!document.hidden) void refreshCandles(interval, false); }, 5_000);
+    return () => clearInterval(timer);
+  }, [tab, interval, refreshCandles]);
+
+  useEffect(() => {
+    if (tab !== "safetrade" || !currentSeries) return;
+    let canceled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        for (const other of MARKET_INTERVALS) {
+          if (canceled || document.hidden || other === interval || publicMarketRef.current.series[other]) continue;
+          await refreshCandles(other, false);
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      })();
+    }, 800);
+    return () => { canceled = true; clearTimeout(timer); };
+  }, [tab, interval, !!currentSeries, refreshCandles]);
 
   useEffect(() => {
     if (tab !== "safetrade" || !connectionToken) return;
@@ -891,7 +963,7 @@ export default function App() {
         <div className="pair-head"><div><h1>PRL/USDT</h1><small>SafeTrade 现货</small></div><button className="market-refresh" aria-label="刷新行情" onClick={refreshExchange}><Icon name="refresh" size={19} /></button></div>
         <div className="market-summary"><div className="market-last"><strong className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{marketNumber(exchange?.price, 8)}</strong><span>USDT <em className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{exchange?.stats24h?.changePercent == null ? "" : `${exchange.stats24h.changePercent >= 0 ? "+" : ""}${exchange.stats24h.changePercent.toFixed(2)}%`}</em></span></div><div className="market-stats"><div><span>24h 最高</span><strong>{marketNumber(exchange?.stats24h?.high, 8)}</strong></div><div><span>24h 最低</span><strong>{marketNumber(exchange?.stats24h?.low, 8)}</strong></div><div><span>24h 成交量</span><strong>{compactMarketNumber(exchange?.stats24h?.volume)} PRL</strong></div><div><span>24h 成交额</span><strong>{compactMarketNumber(exchange?.stats24h?.turnover)} USDT</strong></div></div></div>
         <div className="intervals">{INTERVALS.map((option) => <button key={option.id} className={interval === option.id ? "active" : ""} onClick={() => setIntervalValue(option.id)}>{option.label}</button>)}</div>
-        <div className="chart-card"><CandleChart key={interval} candles={exchange?.candles ?? []} /></div>
+        <div className="chart-card"><CandleChart key={interval} candles={currentSeries?.candles ?? []} loading={marketRefreshing} status={currentSeries && Date.now() - currentSeries.updatedAt > 15_000 ? marketRefreshing ? "正在同步" : `更新于 ${new Date(currentSeries.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""} /></div>
         {exchangeError && <div className="inline-error">{exchangeError}<button onClick={refreshExchange}>重试</button></div>}
         {exchange?.marketError && <div className="inline-error">{exchange.marketError}</div>}
         <div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button></div>

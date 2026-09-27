@@ -76,44 +76,71 @@ function cached(name, lifetime, fetcher) {
   const now = Date.now();
   const entry = marketCache.get(name);
   if (entry?.value && now - entry.at < lifetime) return Promise.resolve(entry.value);
-  if (entry?.pending) return entry.pending;
-  const pending = fetcher().then((value) => {
+  const usableStale = entry?.value && now - entry.at < 300_000;
+  if (entry?.pending) return usableStale ? Promise.resolve(entry.value) : entry.pending;
+  if (entry?.retryAt > now) return usableStale ? Promise.resolve(entry.value) : Promise.reject(new Error('Upstream cooling down'));
+  const pending = Promise.resolve().then(fetcher).then((value) => {
     marketCache.set(name, { value, at: Date.now() });
     return value;
   }).catch((error) => {
-    marketCache.set(name, { value: entry?.value, at: entry?.at ?? 0 });
-    if (entry?.value && now - entry.at < 300_000) return entry.value;
+    marketCache.set(name, { value: entry?.value, at: entry?.at ?? 0, retryAt: Date.now() + 15_000 });
+    if (usableStale) return entry.value;
     throw error;
   });
   marketCache.set(name, { ...entry, pending });
+  if (usableStale) {
+    void pending.catch(() => {});
+    return Promise.resolve(entry.value);
+  }
   return pending;
 }
 
-async function marketData(interval) {
+function candleData(interval) {
   const period = PERIODS[interval];
   const now = Math.floor(Date.now() / 1000);
   const timeFrom = now - period * 60 * 301;
   const query = new URLSearchParams({ period: String(period), time_from: String(timeFrom), time_to: String(now), limit: '300' });
+  return cached(`candles:${interval}`, 10_000, async () => {
+    const rows = await fetchJson(`/trade/public/markets/prlusdt/k-line?${query}`);
+    if (!Array.isArray(rows)) throw new Error('Invalid candles');
+    return { interval, candles: rows.map(normalizeCandle).filter(Boolean).sort((a, b) => a.time - b.time), updatedAt: Date.now() };
+  });
+}
+
+function overviewData() {
+  return cached('overview', 5_000, async () => {
+    const results = await Promise.allSettled([
+      fetchJson('/trade/public/tickers/prlusdt').then(normalizeTicker),
+      fetchJson('/trade/public/markets/prlusdt/depth?limit=10').then(normalizeDepth),
+      fetchJson('/trade/public/markets/prlusdt/trades?limit=20').then(normalizePublicTrades),
+    ]);
+    if (results.every((item) => item.status === 'rejected')) throw new Error('Market unavailable');
+    const value = (index, fallback) => results[index].status === 'fulfilled' ? results[index].value : fallback;
+    const previous = marketCache.get('overview')?.value;
+    const ticker = value(0, null);
+    return {
+      pair: 'PRL/USDT', price: ticker?.price ?? previous?.price ?? null, stats24h: ticker?.stats24h ?? previous?.stats24h ?? null,
+      depth: value(1, previous?.depth ?? { asks: [], bids: [] }), trades: value(2, previous?.trades ?? []),
+      marketError: results.some((item) => item.status === 'rejected') ? '部分行情暂不可用' : null,
+      updatedAt: Date.now(),
+    };
+  });
+}
+
+async function marketData(interval) {
   const results = await Promise.allSettled([
-    cached('ticker', 5_000, async () => normalizeTicker(await fetchJson('/trade/public/tickers/prlusdt'))),
-    cached('depth', 5_000, async () => normalizeDepth(await fetchJson('/trade/public/markets/prlusdt/depth?limit=10'))),
-    cached('trades', 5_000, async () => normalizePublicTrades(await fetchJson('/trade/public/markets/prlusdt/trades?limit=20'))),
-    cached(`candles:${interval}`, 10_000, async () => {
-      const rows = await fetchJson(`/trade/public/markets/prlusdt/k-line?${query}`);
-      if (!Array.isArray(rows)) throw new Error('Invalid candles');
-      return rows.map(normalizeCandle).filter(Boolean).sort((a, b) => a.time - b.time);
-    }),
+    overviewData(), candleData(interval),
   ]);
   const value = (index, fallback) => results[index].status === 'fulfilled' ? results[index].value : fallback;
-  const ticker = value(0, null);
-  const candles = value(3, []);
-  if (!ticker && !candles.length) throw new Error('Market unavailable');
+  const overview = value(0, null);
+  const series = value(1, null);
+  if (!overview && !series?.candles.length) throw new Error('Market unavailable');
   return {
     pair: 'PRL/USDT', interval,
-    price: ticker?.price ?? candles.at(-1)?.close ?? null,
-    stats24h: ticker?.stats24h ?? null,
-    depth: value(1, { asks: [], bids: [] }),
-    trades: value(2, []), candles,
+    price: overview?.price ?? series?.candles.at(-1)?.close ?? null,
+    stats24h: overview?.stats24h ?? null,
+    depth: overview?.depth ?? { asks: [], bids: [] },
+    trades: overview?.trades ?? [], candles: series?.candles ?? [],
     marketError: results.some((item) => item.status === 'rejected') ? '部分行情暂不可用' : null,
     updatedAt: Date.now(),
   };
@@ -185,6 +212,26 @@ async function handle(request, response) {
     try { return json(response, 200, await marketData(interval)); }
     catch { return json(response, 503, { error: '行情暂不可用' }); }
   }
+  if (request.method === 'GET' && url.pathname === '/api/safetrade/overview') {
+    const started = performance.now();
+    try {
+      const data = await overviewData();
+      response.setHeader('Server-Timing', `market;dur=${(performance.now() - started).toFixed(1)}`);
+      return json(response, 200, data);
+    }
+    catch { return json(response, 503, { error: '行情暂不可用' }); }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/safetrade/candles') {
+    const interval = url.searchParams.get('interval') || '1m';
+    if (!PERIODS[interval]) return json(response, 400, { error: 'Unsupported interval' });
+    const started = performance.now();
+    try {
+      const data = await candleData(interval);
+      response.setHeader('Server-Timing', `market;dur=${(performance.now() - started).toFixed(1)}`);
+      return json(response, 200, data);
+    }
+    catch { return json(response, 503, { error: 'K 线暂不可用' }); }
+  }
   if (url.pathname === '/api/safetrade/connection' && request.method === 'POST') {
     if (!allowedToConnect(request)) return json(response, 429, { error: '连接尝试过于频繁' });
     if (!String(request.headers['content-type'] || '').startsWith('application/json')) return json(response, 415, { error: 'Expected JSON' });
@@ -222,4 +269,8 @@ async function handle(request, response) {
 
 http.createServer((request, response) => {
   handle(request, response).catch(() => json(response, 500, { error: 'Server error' }));
-}).listen(PORT, HOST, function () { console.log(`Pearl SafeTrade server listening on ${HOST}:${this.address().port}`); });
+}).listen(PORT, HOST, function () {
+  console.log(`Pearl SafeTrade server listening on ${HOST}:${this.address().port}`);
+  void overviewData().catch(() => {});
+  void candleData('1m').catch(() => {});
+});

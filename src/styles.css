@@ -210,6 +210,8 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .trade-page .chart-card { background: transparent; border: 0; }
 .trade-page .chart-shell svg { touch-action: none; margin-top: 2px; display: block; }
 .chart-toolbar { margin: 0 18px; min-height: 30px; }
+.chart-toolbar-actions { display: flex; align-items: center; gap: 8px; }
+.chart-toolbar-actions small { color: #929a9b; font-size: 10px; }
 .chart-latest { border: 1px solid #e9eceb; border-radius: 6px; background: #fff; color: #495150; padding: 5px 8px; font-size: 11px; }
 .chart-stage { position: relative; }
 .chart-grid { stroke: #f0f1f1; stroke-width: .8; }
