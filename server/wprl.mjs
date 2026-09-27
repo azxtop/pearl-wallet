@@ -258,7 +258,7 @@ export function createWprlFeed({ keyDbPath = '', cachePath = '', storePath = '',
         statsSource: recorded24h ? 'recorded' : 'provider',
         marketError: pool.status === 'rejected' || (!recorded24h && hourly.status === 'rejected') ? '部分链上行情暂不可用' : null,
         recordingSince: store?.state()?.startTime * 1000 || null,
-        updatedAt: rpcTrade ? rpcTrade.time * 1000 : pool.status === 'fulfilled' ? pool.value.at : overview?.updatedAt ?? Date.now(),
+        updatedAt: Date.now(),
       };
       overviewAt = Date.now();
       persist();
@@ -287,7 +287,6 @@ export function createWprlFeed({ keyDbPath = '', cachePath = '', storePath = '',
     const updatedAt = Date.now();
     if (overview) {
       overview = { ...overview, price: latestTrade?.price ?? overview.price, trades: store.recent(20), updatedAt };
-      overviewAt = updatedAt;
       onFrame({ type: 'overview-patch', data: { price: overview.price, trades: overview.trades, updatedAt } });
     }
     for (const interval of Object.keys(FRAMES)) {

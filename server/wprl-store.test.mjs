@@ -35,7 +35,8 @@ test('swaps produce base-volume candles, and scanned no-trade minutes are explic
     const first = trade('a', 101, 6061, 1.1, 2, 0);
     const second = trade('b', 101, 6068, 1.3, 3, 1);
     assert.equal(store.live(first, hash('a')), true);
-    store.reconcile(101, 102, [{ trade: first, blockHash: hash('a') }, { trade: second, blockHash: hash('a') }], 6250);
+    const changed = store.reconcile(101, 102, [{ trade: first, blockHash: hash('a') }, { trade: second, blockHash: hash('a') }], 6250);
+    assert.deepEqual(changed, [6060]);
     const rows = store.candles('1m');
     assert.equal(rows[0].time, 6060);
     assert.deepEqual([rows[0].open, rows[0].high, rows[0].low, rows[0].close, rows[0].volume, rows[0].empty], [1.1, 1.3, 1.1, 1.3, 5, false]);
@@ -43,7 +44,8 @@ test('swaps produce base-volume candles, and scanned no-trade minutes are explic
     assert.equal(rows[1].empty, true);
     assert.equal(rows.at(-1).time, 6240);
     assert.equal(store.recent(20).length, 2);
-    store.reconcile(101, 102, [{ trade: first, blockHash: hash('a') }, { trade: second, blockHash: hash('a') }], 6250);
+    const unchanged = store.reconcile(101, 102, [{ trade: first, blockHash: hash('a') }, { trade: second, blockHash: hash('a') }], 6250);
+    assert.deepEqual(unchanged, []);
     assert.equal(store.candles('1m')[0].volume, 5);
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

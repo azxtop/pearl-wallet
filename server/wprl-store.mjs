@@ -28,7 +28,7 @@ export function createWprlStore(path) {
     block_number=excluded.block_number,block_hash=excluded.block_hash,log_index=excluded.log_index,
     time=excluded.time,side=excluded.side,price=excluded.price,amount=excluded.amount,turnover=excluded.turnover`);
   const swapAt = db.prepare('SELECT time,block_hash FROM swaps WHERE id=?');
-  const swapRange = db.prepare('SELECT time FROM swaps WHERE block_number BETWEEN ? AND ?');
+  const swapRange = db.prepare('SELECT id,block_number,block_hash,log_index,time,side,price,amount,turnover FROM swaps WHERE block_number BETWEEN ? AND ? ORDER BY block_number,log_index');
   const deleteRange = db.prepare('DELETE FROM swaps WHERE block_number BETWEEN ? AND ?');
   const deleteSwap = db.prepare('DELETE FROM swaps WHERE id=?');
   const minuteSwaps = db.prepare('SELECT price,amount,turnover FROM swaps WHERE time>=? AND time<? ORDER BY block_number,log_index');
@@ -105,13 +105,24 @@ export function createWprlStore(path) {
     const current = state();
     if (!current || from < current.startBlock || to < from || !Number.isFinite(coveredTime)) throw new Error('Invalid WPRL range');
     return transaction(() => {
-      const affected = new Set(swapRange.all(from, to).map((row) => minute(row.time)));
-      deleteRange.run(from, to);
-      for (const { trade, blockHash } of trades) {
-        if (trade.blockNumber < from || trade.blockNumber > to) throw new Error('WPRL swap outside range');
-        insert(trade, blockHash, affected);
+      const existing = swapRange.all(from, to);
+      const incoming = trades.map(({ trade, blockHash }) => ({
+        id: trade.id, block_number: trade.blockNumber, block_hash: blockHash?.toLowerCase(),
+        log_index: trade.logIndex, time: trade.time, side: trade.side,
+        price: trade.price, amount: trade.amount, turnover: trade.turnover,
+      })).sort((a, b) => a.block_number - b.block_number || a.log_index - b.log_index);
+      const unchanged = existing.length === incoming.length && existing.every((row, index) =>
+        Object.keys(row).every((key) => row[key] === incoming[index][key]));
+      const affected = new Set();
+      if (!unchanged) {
+        for (const row of existing) affected.add(minute(row.time));
+        deleteRange.run(from, to);
+        for (const { trade, blockHash } of trades) {
+          if (trade.blockNumber < from || trade.blockNumber > to) throw new Error('WPRL swap outside range');
+          insert(trade, blockHash, affected);
+        }
+        for (const time of affected) rebuildMinute(time);
       }
-      for (const time of affected) rebuildMinute(time);
       if (to >= current.cursor) {
         putState.run('cursor', String(to));
         putState.run('covered_time', String(coveredTime));
