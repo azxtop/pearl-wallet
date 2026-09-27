@@ -182,3 +182,71 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .toast { position: fixed; z-index: 20; bottom: calc(85px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: min(90vw, 540px); background: #162439; color: #fff; border-radius: 12px; padding: 14px 18px; font-size: 13px; box-shadow: 0 5px 30px #14203344; }
 .toast.error { background: #a4433e; }.toast button { float: right; border: 0; background: none; color: #fff; font-size: 18px; padding: 0 0 0 15px; }
 @media (max-width: 390px) { .content { padding-left: 17px; padding-right: 17px; }.balance-block h1 { font-size: 36px; }.activity { gap: 10px; padding: 12px; }.activity em { font-size: 12px; } }
+
+/* SafeTrade uses one continuous surface, with the chart reaching the screen edge. */
+.app { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.app input, .app textarea, .app .secret-phrase { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+.app.trade-active, .trade-active .content, .trade-page { background: #fff; }
+.trade-active .content { padding-left: 0; padding-right: 0; }
+.trade-page { --trade-green: #5dbb91; --trade-red: #e45468; --trade-muted: #92979c; color: #171c1a; padding-bottom: 30px; }
+.trade-page .pair-head, .trade-page .market-summary, .trade-page .intervals, .trade-page .market-tabs, .trade-page .book, .trade-page .recent-trades, .trade-page .exchange-assets-head, .trade-page .exchange-balances, .trade-page .safetrade-connect, .trade-page > .inline-error { margin-left: 18px; margin-right: 18px; }
+.pair-head { padding-top: 13px; padding-bottom: 12px; }
+.pair-head h1 { font-size: 21px; letter-spacing: -.025em; font-weight: 700; }
+.pair-head small { font-size: 11px; margin-top: 2px; color: var(--trade-muted); }
+.market-refresh { background: transparent; width: 34px; height: 34px; color: #5f6768; }
+.market-summary { padding-top: 16px; padding-bottom: 18px; gap: 12px; border-color: #f0f0ef; }
+.market-last { min-width: 0; }
+.market-last strong { font-size: clamp(25px, 7vw, 32px); letter-spacing: -.035em; line-height: 1.2; font-weight: 650; }
+.market-last span { font-size: 11px; margin-top: 4px; color: #737b7b; }
+.market-last em { font-weight: 650; }
+.trade-page .positive { color: var(--trade-green); }
+.trade-page .negative { color: var(--trade-red); }
+.market-stats { flex-basis: 45%; gap: 5px; font-size: 10.5px; }
+.market-stats span { color: var(--trade-muted); }
+.market-stats strong { font-weight: 600; }
+.intervals { gap: 20px; padding-top: 14px; padding-bottom: 9px; }
+.intervals button { font-size: 13px; padding-bottom: 9px; }
+.intervals button.active, .market-tabs button.active { border-bottom-color: #f0c93e; }
+.trade-page .chart-card { background: transparent; border: 0; }
+.trade-page .chart-shell svg { touch-action: none; margin-top: 2px; display: block; }
+.chart-toolbar { margin: 0 18px; }
+.chart-controls button { min-width: 31px; height: 30px; border-color: #e9eceb; color: #495150; }
+.chart-grid { stroke: #f0f1f1; stroke-width: .8; }
+.chart-price-label { fill: #969c9d; font-size: 15px; }
+.trade-page .candle.up { fill: var(--trade-green); stroke: var(--trade-green); }
+.trade-page .candle.down { fill: var(--trade-red); stroke: var(--trade-red); }
+.chart-axis { padding: 6px 18px; color: #9aa0a0; }
+.chart-candle-details { padding: 0 18px; font-size: 11px; }
+.market-tabs { margin-top: 22px; border-color: #f0f1f1; }
+.market-tabs button { font-size: 14px; }
+.book { min-height: 330px; padding-top: 12px; }
+.book-ratio { display: flex; align-items: center; gap: 9px; color: var(--trade-muted); font-size: 11px; padding: 5px 0 14px; }
+.book-ratio-track { flex: 1; height: 5px; background: var(--trade-red); border-radius: 4px; overflow: hidden; }
+.book-ratio-track i { display: block; height: 100%; background: var(--trade-green); }
+.book-columns { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 6px; }
+.book-side { min-width: 0; }
+.book-side-head, .book-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 2px; align-items: center; font-variant-numeric: tabular-nums; }
+.book-side-head { color: var(--trade-muted); font-size: 11px; height: 29px; }
+.book-side-head span:last-child { text-align: right; }
+.book-row { min-height: 31px; padding: 5px 2px; font-size: 11.5px; white-space: nowrap; overflow: hidden; background: linear-gradient(to left, var(--book-color) var(--book-fill), transparent var(--book-fill)); }
+.book-row.bid { --book-color: #5dbb911b; }
+.book-row.ask { --book-color: #e454681b; }
+.book-row .book-price { font-weight: 600; }
+.book-row .book-amount { color: #303737; }
+.book-row span:last-child { text-align: right; }
+.book-row.bid .book-price { color: var(--trade-green); }
+.book-row.ask .book-price { color: var(--trade-red); }
+.book-spread { margin-top: 11px; border-top: 1px solid #f1f2f2; border-bottom: 0; }
+.exchange-assets-head { display: flex; justify-content: space-between; align-items: center; margin-top: 29px; margin-bottom: 7px; position: relative; }
+.exchange-assets-head h2 { font-size: 17px; margin: 0; }
+.exchange-assets-actions { display: flex; gap: 5px; }
+.exchange-assets-actions > button { border: 0; background: transparent; min-width: 34px; min-height: 34px; color: #7d8585; display: grid; place-items: center; font-size: 14px; }
+.account-menu { position: absolute; z-index: 3; right: 0; top: 36px; background: #fff; border: 1px solid #eceeee; box-shadow: 0 8px 22px #1b282019; border-radius: 9px; padding: 3px; }
+.account-menu button { border: 0; background: transparent; padding: 11px 16px; white-space: nowrap; color: #a43d49; }
+.asset-card { border: 0; border-radius: 0; border-bottom: 1px solid #f0f1f1; box-shadow: none; padding: 15px 0; margin: 0; gap: 11px; }
+.asset-logo { width: 35px; height: 35px; object-fit: contain; flex: none; }
+.asset-info { min-width: 0; }
+.asset-info strong, .asset-values strong { font-size: 15px; font-weight: 650; }
+.asset-info small, .asset-values small { display: block; font-size: 11px; color: #979d9d; margin-top: 3px; }
+.asset-values { margin-left: auto; min-width: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.safetrade-connect { border: 1px solid #edf0ee; box-shadow: none; }

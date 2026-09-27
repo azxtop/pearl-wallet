@@ -20,7 +20,7 @@ import { clearConnectionToken, connectAccount, disconnectAccount, loadAccount, l
 type Tab = "wallet" | "safetrade" | "setting";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.12";
+const APP_VERSION = "0.2.13";
 type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
@@ -60,7 +60,8 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
   const [visibleCount, setVisibleCount] = useState(80);
   const [offset, setOffset] = useState(0);
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
-  const dragStart = useRef<{ x: number; y: number; offset: number } | null>(null);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<{ x: number; offset: number; count: number; distance: number; moved: boolean } | null>(null);
   const maxOffset = Math.max(0, candles.length - visibleCount);
   const end = candles.length - Math.min(offset, maxOffset);
   const data = candles.slice(Math.max(0, end - visibleCount), end);
@@ -72,23 +73,65 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
   const span = Math.max(high - low, high * 0.003);
   const y = (value: number) => 240 - ((value - low) / span) * 210;
   const maxVolume = Math.max(1, ...data.map((item) => item.volume));
-  const chartWidth = 565;
+  const chartWidth = 558;
   const width = chartWidth / data.length;
   function movingAverage(index: number, period: number) {
-    if (index < period - 1) return null;
-    const values = data.slice(index - period + 1, index + 1).map((item) => item.close);
+    const globalIndex = Math.max(0, end - visibleCount) + index;
+    if (globalIndex < period - 1) return null;
+    const values = candles.slice(globalIndex - period + 1, globalIndex + 1).map((item) => item.close);
     return values.every(Number.isFinite) ? values.reduce((sum, value) => sum + value, 0) / period : null;
   }
   const maPath = (period: number) => data.map((_, index) => {
     const value = movingAverage(index, period);
-    return value === null ? "" : `${index === period - 1 ? "M" : "L"}${(index + .5) * width},${y(value)}`;
+    return value === null ? "" : `${index === 0 || movingAverage(index - 1, period) === null ? "M" : "L"}${(index + .5) * width},${y(value)}`;
   }).join(" ");
+  function pointerDistance() {
+    const [first, second] = [...pointers.current.values()];
+    return first && second ? Math.hypot(first.x - second.x, first.y - second.y) : 0;
+  }
+  function beginPointer(event: React.PointerEvent<SVGSVGElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    gesture.current = { x: event.clientX, offset, count: visibleCount, distance: pointerDistance(), moved: pointers.current.size > 1 };
+  }
+  function movePointer(event: React.PointerEvent<SVGSVGElement>) {
+    if (!pointers.current.has(event.pointerId) || !gesture.current) return;
+    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const current = gesture.current;
+    if (pointers.current.size > 1) {
+      const distance = pointerDistance();
+      if (current.distance > 0 && distance > 0) {
+        const count = Math.max(20, Math.min(200, Math.round(current.count * current.distance / distance)));
+        setVisibleCount(count);
+        setOffset(Math.max(0, Math.min(candles.length - count, current.offset + Math.round((current.count - count) / 2))));
+        current.moved = true;
+      }
+      return;
+    }
+    const dx = event.clientX - current.x;
+    if (Math.abs(dx) < 5 && !current.moved) return;
+    current.moved = true;
+    const candlePixels = event.currentTarget.getBoundingClientRect().width * chartWidth / 640 / current.count;
+    setOffset(Math.max(0, Math.min(candles.length - current.count, current.offset + Math.round(dx / candlePixels))));
+  }
+  function endPointer(event: React.PointerEvent<SVGSVGElement>) {
+    if (!pointers.current.has(event.pointerId)) return;
+    if (pointers.current.size === 1 && !gesture.current?.moved) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const index = Math.floor((event.clientX - rect.left) / (rect.width * chartWidth / 640) * data.length);
+      if (data[index]) setSelectedTime(data[index].time);
+    }
+    pointers.current.delete(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    const remaining = [...pointers.current.values()][0];
+    gesture.current = remaining ? { x: remaining.x, offset, count: visibleCount, distance: 0, moved: true } : null;
+  }
   return <div className="chart-shell">
     <div className="chart-toolbar"><div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div><div className="chart-controls"><button aria-label="缩小 K 线" disabled={visibleCount >= Math.min(200, candles.length)} onClick={() => setVisibleCount((count) => Math.min(200, candles.length, count + 20))}>−</button><button aria-label="放大 K 线" disabled={visibleCount <= 40} onClick={() => setVisibleCount((count) => Math.max(40, count - 20))}>+</button>{offset > 0 && <button className="chart-latest" onClick={() => setOffset(0)}>最新</button>}</div></div>
     {selected && <div className="chart-candle-details"><span>{new Date(selected.time * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span><span>开 {marketNumber(selected.open, 8)}</span><span>高 {marketNumber(selected.high, 8)}</span><span>低 {marketNumber(selected.low, 8)}</span><span>收 {marketNumber(selected.close, 8)}</span><span>量 {marketNumber(selected.volume, 2)}</span></div>}
-    <svg viewBox="0 0 640 355" preserveAspectRatio="none" role="img" aria-label="PRL USDT K 线" onPointerDown={(event) => { dragStart.current = { x: event.clientX, y: event.clientY, offset: Math.min(offset, maxOffset) }; }} onPointerMove={(event) => { const start = dragStart.current; if (!start) return; const dx = event.clientX - start.x; const dy = event.clientY - start.y; if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) return; event.currentTarget.setPointerCapture(event.pointerId); const candlePixels = event.currentTarget.getBoundingClientRect().width * chartWidth / 640 / data.length; setOffset(Math.max(0, Math.min(maxOffset, start.offset + Math.round(dx / candlePixels)))); }} onPointerUp={(event) => { const start = dragStart.current; if (!start) return; if (Math.abs(event.clientX - start.x) < 8 && Math.abs(event.clientY - start.y) < 8) { const rect = event.currentTarget.getBoundingClientRect(); const index = Math.floor((event.clientX - rect.left) / (rect.width * chartWidth / 640) * data.length); if (data[index]) setSelectedTime(data[index].time); } dragStart.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }} onPointerCancel={() => { dragStart.current = null; }}>
-      {[0, 1, 2, 3, 4].map((line) => <g key={line}><line x1="0" x2={chartWidth} y1={30 + line * 52} y2={30 + line * 52} className="chart-grid" /><text x="572" y={34 + line * 52} className="chart-price-label">{(low + span * (240 - (30 + line * 52)) / 210).toFixed(4)}</text></g>)}
-      <line x1="0" x2={chartWidth} y1="270" y2="270" className="chart-grid" />
+    <svg viewBox="0 0 640 355" preserveAspectRatio="none" role="img" aria-label="PRL USDT K 线" onPointerDown={beginPointer} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={endPointer} onWheel={(event) => { if (event.ctrlKey) { setVisibleCount((count) => Math.max(20, Math.min(200, count + (event.deltaY > 0 ? 10 : -10)))); } }}>
+      {[0, 1, 2, 3, 4].map((line) => <g key={line}><line x1="0" x2="640" y1={30 + line * 52} y2={30 + line * 52} className="chart-grid" /><text x="634" textAnchor="end" y={26 + line * 52} className="chart-price-label">{(low + span * (240 - (30 + line * 52)) / 210).toFixed(4)}</text></g>)}
+      <line x1="0" x2="640" y1="270" y2="270" className="chart-grid" />
       {data.map((item, index) => {
         const x = index * width + width / 2;
         const up = item.close >= item.open;
@@ -99,6 +142,7 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
         </g>;
       })}
       <path d={maPath(7)} className="ma-line ma7" /><path d={maPath(25)} className="ma-line ma25" /><path d={maPath(99)} className="ma-line ma99" />
+      <rect x="0" y="0" width="640" height="355" fill="transparent" pointerEvents="all" />
     </svg>
     <div className="chart-axis"><span>{new Date(data[0]!.time * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span><span>{new Date(data.at(-1)!.time * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span></div>
   </div>;
@@ -113,11 +157,11 @@ function compactMarketNumber(value: number | null | undefined) {
 }
 
 function OrderBook({ depth }: { depth: MarketData["depth"] | undefined }) {
-  const asks = [...(depth?.asks ?? [])].reverse();
+  const asks = depth?.asks ?? [];
   const bids = depth?.bids ?? [];
   const max = Math.max(1, ...asks.map((level) => level.amount), ...bids.map((level) => level.amount));
-  const row = (level: { price: number; amount: number }, side: "ask" | "bid") => <div className={`book-row ${side}`} key={`${side}-${level.price}`} style={{ "--book-fill": `${Math.min(100, level.amount / max * 100)}%` } as CSSProperties}><span>{marketNumber(level.price, 8)}</span><span>{marketNumber(level.amount, 4)}</span><span>{marketNumber(level.price * level.amount, 2)}</span></div>;
-  return <div className="book"><div className="book-labels"><span>价格 (USDT)</span><span>数量 (PRL)</span><span>金额 (USDT)</span></div>{asks.length || bids.length ? <><div className="book-half">{asks.map((level) => row(level, "ask"))}</div><div className="book-spread">买卖价差 {asks.length && bids.length ? marketNumber(asks.at(-1)!.price - bids[0]!.price, 8) : "—"} USDT</div><div className="book-half">{bids.map((level) => row(level, "bid"))}</div></> : <div className="market-empty">暂无盘口数据</div>}</div>;
+  const row = (level: { price: number; amount: number }, side: "ask" | "bid") => <div className={`book-row ${side}`} key={`${side}-${level.price}`} style={{ "--book-fill": `${Math.min(100, level.amount / max * 100)}%` } as CSSProperties}>{side === "bid" ? <><span className="book-amount">{compactMarketNumber(level.amount)}</span><span className="book-price">{marketNumber(level.price, 8)}</span></> : <><span className="book-price">{marketNumber(level.price, 8)}</span><span className="book-amount">{compactMarketNumber(level.amount)}</span></>}</div>;
+  return <div className="book">{asks.length || bids.length ? <><div className="book-ratio"><span>买盘</span><div className="book-ratio-track"><i style={{ width: `${100 * bids.reduce((sum, level) => sum + level.amount, 0) / Math.max(1, [...bids, ...asks].reduce((sum, level) => sum + level.amount, 0))}%` }} /></div><span>卖盘</span></div><div className="book-columns"><div className="book-side"><div className="book-side-head"><span>数量 PRL</span><span>买价 USDT</span></div>{bids.map((level) => row(level, "bid"))}</div><div className="book-side"><div className="book-side-head"><span>卖价 USDT</span><span>数量 PRL</span></div>{asks.map((level) => row(level, "ask"))}</div></div><div className="book-spread">价差 {asks.length && bids.length ? marketNumber(asks[0]!.price - bids[0]!.price, 8) : "—"} USDT</div></> : <div className="market-empty">暂无盘口数据</div>}</div>;
 }
 
 function RecentTrades({ trades }: { trades: MarketData["trades"] | undefined }) {
@@ -159,6 +203,7 @@ export default function App() {
   const [connectingSafeTrade, setConnectingSafeTrade] = useState(false);
   const [interval, setIntervalValue] = useState<Interval>("1m");
   const [marketDetails, setMarketDetails] = useState<"depth" | "trades">("depth");
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -733,7 +778,7 @@ export default function App() {
     setPullDistance(0);
   }
 
-  return <div className="app">
+  return <div className={`app ${tab === "safetrade" ? "trade-active" : ""}`} onContextMenu={(event) => { if (!(event.target instanceof HTMLElement) || !event.target.closest("input, textarea, .secret-phrase")) event.preventDefault(); }}>
     <main className="content">
       {tab === "wallet" && (!activeProfile || addingProfile) && <section className="onboarding">
         {addingProfile && <button className="back" aria-label="取消添加钱包" onClick={() => { setAddingProfile(false); setWalletName(""); setPassword(""); setInputMnemonic(""); setAddresses(activeProfile?.kind === "watch" ? [activeProfile.address] : !requireUnlock && activeProfile?.kind === "wallet" && activeProfile.addresses.length ? activeProfile.addresses : null); setAutoFingerAttempted(false); }}><Icon name="back" /></button>}
@@ -783,7 +828,7 @@ export default function App() {
       </section>}
 
       {tab === "safetrade" && <section className="trade-page">
-        <div className="pair-head"><div><h1>PRL/USDT</h1><small>SafeTrade · 现货行情</small></div><button className="market-refresh" aria-label="刷新行情" onClick={refreshExchange}><Icon name="refresh" size={19} /></button></div>
+        <div className="pair-head"><div><h1>PRL/USDT</h1><small>SafeTrade 现货</small></div><button className="market-refresh" aria-label="刷新行情" onClick={refreshExchange}><Icon name="refresh" size={19} /></button></div>
         <div className="market-summary"><div className="market-last"><strong className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{marketNumber(exchange?.price, 8)}</strong><span>USDT <em className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{exchange?.stats24h?.changePercent == null ? "" : `${exchange.stats24h.changePercent >= 0 ? "+" : ""}${exchange.stats24h.changePercent.toFixed(2)}%`}</em></span></div><div className="market-stats"><div><span>24h 最高</span><strong>{marketNumber(exchange?.stats24h?.high, 8)}</strong></div><div><span>24h 最低</span><strong>{marketNumber(exchange?.stats24h?.low, 8)}</strong></div><div><span>24h 成交量</span><strong>{compactMarketNumber(exchange?.stats24h?.volume)} PRL</strong></div><div><span>24h 成交额</span><strong>{compactMarketNumber(exchange?.stats24h?.turnover)} USDT</strong></div></div></div>
         <div className="intervals">{INTERVALS.map((option) => <button key={option.id} className={interval === option.id ? "active" : ""} onClick={() => setIntervalValue(option.id)}>{option.label}</button>)}</div>
         <div className="chart-card"><CandleChart key={interval} candles={exchange?.candles ?? []} /></div>
@@ -791,8 +836,8 @@ export default function App() {
         {exchange?.marketError && <div className="inline-error">{exchange.marketError}</div>}
         <div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button></div>
         {marketDetails === "depth" ? <OrderBook depth={exchange?.depth} /> : <RecentTrades trades={exchange?.trades} />}
-        <div className="section-heading"><h2>我的 SafeTrade 余额</h2>{connectionToken && <button className="text-inline" onClick={refreshSafeTradeAccount}>刷新</button>}</div>
-        {connectionToken ? <><div className="exchange-balances">{(["PRL", "USDT"] as const).map((asset) => <div className="asset-card" key={asset}><span className="asset-symbol">{asset === "PRL" ? "◉" : "$"}</span><div><strong>{asset}</strong><small>可用 {account?.balances[asset].available ?? "—"}</small></div><em>冻结 {account?.balances[asset].locked ?? "—"}</em></div>)}</div><button className="text-button" onClick={removeSafeTradeConnection}>断开 SafeTrade 连接</button></> : <form className="safetrade-connect" onSubmit={(event) => { event.preventDefault(); void connectSafeTrade(); }}><Field label="只读 API Key" value={safeKey} onChange={setSafeKey} autoComplete="off" /><Field label="API Secret" value={safeSecret} onChange={setSafeSecret} type="password" autoComplete="off" /><button className="primary" disabled={connectingSafeTrade || !safeKey.trim() || !safeSecret.trim()}>{connectingSafeTrade ? "连接中…" : "连接 SafeTrade"}</button><p>密钥仅发送到 Pearl Wallet 服务器，用于读取 PRL 和 USDT 余额。</p></form>}
+        <div className="exchange-assets-head"><h2>现货资产</h2>{connectionToken && <div className="exchange-assets-actions"><button aria-label="刷新现货资产" title="刷新现货资产" onClick={refreshSafeTradeAccount}><Icon name="refresh" size={18} /></button><button aria-label="管理 SafeTrade 连接" title="管理连接" onClick={() => setAccountMenuOpen((open) => !open)}>•••</button>{accountMenuOpen && <div className="account-menu"><button onClick={() => { setAccountMenuOpen(false); void removeSafeTradeConnection(); }}>断开连接</button></div>}</div>}</div>
+        {connectionToken ? <div className="exchange-balances">{(["PRL", "USDT"] as const).map((asset) => { const balance = account?.balances[asset]; const approximate = !balance || (asset === "PRL" && exchange?.price == null) ? NaN : asset === "USDT" ? Number(balance.available) : Number(balance.available) * exchange!.price!; return <div className="asset-card" key={asset}><img className="asset-logo" src={asset === "PRL" ? "/pearl-logo.svg" : "/usdt.svg"} alt="" /><div className="asset-info"><strong>{asset}</strong><small>{asset === "PRL" ? "Pearl" : "Tether USD"}</small>{balance && Number(balance.locked) > 0 && <small>挂单占用 {balance.locked}</small>}</div><div className="asset-values"><strong>{balance?.available ?? "—"}</strong><small>{Number.isFinite(approximate) ? `≈ ${marketNumber(approximate, 2)} USDT` : "可用余额"}</small></div></div>; })}</div> : <form className="safetrade-connect" onSubmit={(event) => { event.preventDefault(); void connectSafeTrade(); }}><Field label="只读 API Key" value={safeKey} onChange={setSafeKey} autoComplete="off" /><Field label="API Secret" value={safeSecret} onChange={setSafeSecret} type="password" autoComplete="off" /><button className="primary" disabled={connectingSafeTrade || !safeKey.trim() || !safeSecret.trim()}>{connectingSafeTrade ? "连接中…" : "连接 SafeTrade"}</button><p>密钥仅发送到 Pearl Wallet 服务器，用于读取 PRL 和 USDT 余额。</p></form>}
         {accountError && <div className="inline-error">{accountError}</div>}
       </section>}
 
