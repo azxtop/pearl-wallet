@@ -62,8 +62,12 @@ test('public market never includes account data; connection token gates balances
     assert.equal((await fetch(`${base}/account`, { method: 'DELETE', headers })).status, 200);
     assert.equal((await fetch(`${base}/account`, { headers })).status, 401);
   } finally {
-    child.kill();
-    upstream.close();
+    if (child.exitCode === null) {
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      child.kill();
+      await exited;
+    }
+    await new Promise((resolve) => upstream.close(resolve));
     if (dataDir.startsWith(tmpdir())) rmSync(dataDir, { recursive: true, force: true });
   }
 });

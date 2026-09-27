@@ -20,7 +20,7 @@ import { clearConnectionToken, connectAccount, disconnectAccount, loadAccount, l
 type Tab = "wallet" | "safetrade" | "setting";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.11";
+const APP_VERSION = "0.2.12";
 type Interval = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
@@ -57,9 +57,16 @@ function Field({ label, value, onChange, type = "text", placeholder, autoComplet
 }
 
 function CandleChart({ candles }: { candles: MarketData["candles"] }) {
-  const data = candles.slice(-120);
+  const [visibleCount, setVisibleCount] = useState(80);
+  const [offset, setOffset] = useState(0);
+  const [selectedTime, setSelectedTime] = useState<number | null>(null);
+  const dragStart = useRef<{ x: number; y: number; offset: number } | null>(null);
+  const maxOffset = Math.max(0, candles.length - visibleCount);
+  const end = candles.length - Math.min(offset, maxOffset);
+  const data = candles.slice(Math.max(0, end - visibleCount), end);
   const real = data.filter((item) => Number.isFinite(item.high) && Number.isFinite(item.low));
   if (!real.length) return <div className="chart-empty">暂无成交数据</div>;
+  const selected = selectedTime === null ? null : data.find((item) => item.time === selectedTime);
   const high = Math.max(...real.map((item) => item.high));
   const low = Math.min(...real.map((item) => item.low));
   const span = Math.max(high - low, high * 0.003);
@@ -77,8 +84,9 @@ function CandleChart({ candles }: { candles: MarketData["candles"] }) {
     return value === null ? "" : `${index === period - 1 ? "M" : "L"}${(index + .5) * width},${y(value)}`;
   }).join(" ");
   return <div className="chart-shell">
-    <div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div>
-    <svg viewBox="0 0 640 355" preserveAspectRatio="none" role="img" aria-label="PRL USDT K 线">
+    <div className="chart-toolbar"><div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div><div className="chart-controls"><button aria-label="缩小 K 线" disabled={visibleCount >= Math.min(200, candles.length)} onClick={() => setVisibleCount((count) => Math.min(200, candles.length, count + 20))}>−</button><button aria-label="放大 K 线" disabled={visibleCount <= 40} onClick={() => setVisibleCount((count) => Math.max(40, count - 20))}>+</button>{offset > 0 && <button className="chart-latest" onClick={() => setOffset(0)}>最新</button>}</div></div>
+    {selected && <div className="chart-candle-details"><span>{new Date(selected.time * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span><span>开 {marketNumber(selected.open, 8)}</span><span>高 {marketNumber(selected.high, 8)}</span><span>低 {marketNumber(selected.low, 8)}</span><span>收 {marketNumber(selected.close, 8)}</span><span>量 {marketNumber(selected.volume, 2)}</span></div>}
+    <svg viewBox="0 0 640 355" preserveAspectRatio="none" role="img" aria-label="PRL USDT K 线" onPointerDown={(event) => { dragStart.current = { x: event.clientX, y: event.clientY, offset: Math.min(offset, maxOffset) }; }} onPointerMove={(event) => { const start = dragStart.current; if (!start) return; const dx = event.clientX - start.x; const dy = event.clientY - start.y; if (Math.abs(dx) < 8 || Math.abs(dx) < Math.abs(dy)) return; event.currentTarget.setPointerCapture(event.pointerId); const candlePixels = event.currentTarget.getBoundingClientRect().width * chartWidth / 640 / data.length; setOffset(Math.max(0, Math.min(maxOffset, start.offset + Math.round(dx / candlePixels)))); }} onPointerUp={(event) => { const start = dragStart.current; if (!start) return; if (Math.abs(event.clientX - start.x) < 8 && Math.abs(event.clientY - start.y) < 8) { const rect = event.currentTarget.getBoundingClientRect(); const index = Math.floor((event.clientX - rect.left) / (rect.width * chartWidth / 640) * data.length); if (data[index]) setSelectedTime(data[index].time); } dragStart.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }} onPointerCancel={() => { dragStart.current = null; }}>
       {[0, 1, 2, 3, 4].map((line) => <g key={line}><line x1="0" x2={chartWidth} y1={30 + line * 52} y2={30 + line * 52} className="chart-grid" /><text x="572" y={34 + line * 52} className="chart-price-label">{(low + span * (240 - (30 + line * 52)) / 210).toFixed(4)}</text></g>)}
       <line x1="0" x2={chartWidth} y1="270" y2="270" className="chart-grid" />
       {data.map((item, index) => {
@@ -109,7 +117,7 @@ function OrderBook({ depth }: { depth: MarketData["depth"] | undefined }) {
   const bids = depth?.bids ?? [];
   const max = Math.max(1, ...asks.map((level) => level.amount), ...bids.map((level) => level.amount));
   const row = (level: { price: number; amount: number }, side: "ask" | "bid") => <div className={`book-row ${side}`} key={`${side}-${level.price}`} style={{ "--book-fill": `${Math.min(100, level.amount / max * 100)}%` } as CSSProperties}><span>{marketNumber(level.price, 8)}</span><span>{marketNumber(level.amount, 4)}</span><span>{marketNumber(level.price * level.amount, 2)}</span></div>;
-  return <div className="book"><div className="book-labels"><span>价格 (USDT)</span><span>数量 (PRL)</span><span>合计 (USDT)</span></div>{asks.length || bids.length ? <><div className="book-half">{asks.map((level) => row(level, "ask"))}</div><div className="book-spread">买卖价差 {asks.length && bids.length ? marketNumber(asks.at(-1)!.price - bids[0]!.price, 8) : "—"} USDT</div><div className="book-half">{bids.map((level) => row(level, "bid"))}</div></> : <div className="market-empty">暂无盘口数据</div>}</div>;
+  return <div className="book"><div className="book-labels"><span>价格 (USDT)</span><span>数量 (PRL)</span><span>金额 (USDT)</span></div>{asks.length || bids.length ? <><div className="book-half">{asks.map((level) => row(level, "ask"))}</div><div className="book-spread">买卖价差 {asks.length && bids.length ? marketNumber(asks.at(-1)!.price - bids[0]!.price, 8) : "—"} USDT</div><div className="book-half">{bids.map((level) => row(level, "bid"))}</div></> : <div className="market-empty">暂无盘口数据</div>}</div>;
 }
 
 function RecentTrades({ trades }: { trades: MarketData["trades"] | undefined }) {
@@ -778,7 +786,7 @@ export default function App() {
         <div className="pair-head"><div><h1>PRL/USDT</h1><small>SafeTrade · 现货行情</small></div><button className="market-refresh" aria-label="刷新行情" onClick={refreshExchange}><Icon name="refresh" size={19} /></button></div>
         <div className="market-summary"><div className="market-last"><strong className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{marketNumber(exchange?.price, 8)}</strong><span>USDT <em className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{exchange?.stats24h?.changePercent == null ? "" : `${exchange.stats24h.changePercent >= 0 ? "+" : ""}${exchange.stats24h.changePercent.toFixed(2)}%`}</em></span></div><div className="market-stats"><div><span>24h 最高</span><strong>{marketNumber(exchange?.stats24h?.high, 8)}</strong></div><div><span>24h 最低</span><strong>{marketNumber(exchange?.stats24h?.low, 8)}</strong></div><div><span>24h 成交量</span><strong>{compactMarketNumber(exchange?.stats24h?.volume)} PRL</strong></div><div><span>24h 成交额</span><strong>{compactMarketNumber(exchange?.stats24h?.turnover)} USDT</strong></div></div></div>
         <div className="intervals">{INTERVALS.map((option) => <button key={option.id} className={interval === option.id ? "active" : ""} onClick={() => setIntervalValue(option.id)}>{option.label}</button>)}</div>
-        <div className="chart-card"><CandleChart candles={exchange?.candles ?? []} /></div>
+        <div className="chart-card"><CandleChart key={interval} candles={exchange?.candles ?? []} /></div>
         {exchangeError && <div className="inline-error">{exchangeError}<button onClick={refreshExchange}>重试</button></div>}
         {exchange?.marketError && <div className="inline-error">{exchange.marketError}</div>}
         <div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button></div>

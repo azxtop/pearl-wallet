@@ -92,8 +92,8 @@ function cached(name, lifetime, fetcher) {
 async function marketData(interval) {
   const period = PERIODS[interval];
   const now = Math.floor(Date.now() / 1000);
-  const timeFrom = now - period * 60 * 121;
-  const query = new URLSearchParams({ period: String(period), time_from: String(timeFrom), time_to: String(now), limit: '120' });
+  const timeFrom = now - period * 60 * 301;
+  const query = new URLSearchParams({ period: String(period), time_from: String(timeFrom), time_to: String(now), limit: '300' });
   const results = await Promise.allSettled([
     cached('ticker', 8_000, async () => normalizeTicker(await fetchJson('/trade/public/tickers/prlusdt'))),
     cached('depth', 8_000, async () => normalizeDepth(await fetchJson('/trade/public/markets/prlusdt/depth?limit=10'))),

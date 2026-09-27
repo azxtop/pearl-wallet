@@ -110,7 +110,7 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .chart-header { display: flex; justify-content: space-between; align-items: center; padding: 0 8px; }
 .chart-header h2 { margin: 0; font-size: 17px; }
 .chart-header span { background: #eef2f5; border-radius: 7px; padding: 5px 8px; font-size: 12px; font-weight: 650; }
-.chart-shell svg { width: 100%; height: 220px; margin-top: 20px; }
+.chart-shell svg { width: 100%; height: 220px; margin-top: 20px; touch-action: pan-y; cursor: crosshair; }
 .chart-grid { stroke: #e6ebf0; stroke-width: 1; }
 .chart-price-label { fill: #929da9; font-size: 11px; }
 .candle.up { fill: #07965b; stroke: #07965b; }.candle.down { fill: #cb5252; stroke: #cb5252; }.candle.empty { fill: none; stroke: #a9b3c0; }
@@ -137,9 +137,14 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .intervals button.active { color: #111827; font-weight: 700; border-bottom: 2px solid #e8c530; }
 .trade-page .chart-card { border-radius: 0; border-left: 0; border-right: 0; box-shadow: none; padding: 0; }
 .trade-page .chart-shell svg { height: 355px; margin-top: 6px; }
-.ma-legend { display: flex; gap: 16px; color: #c7aa2a; font-size: 11px; padding-top: 10px; }
+.chart-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ma-legend { display: flex; gap: 10px; color: #c7aa2a; font-size: 11px; padding-top: 10px; white-space: nowrap; }
 .ma-legend span:nth-child(2) { color: #b6478d; }
 .ma-legend span:nth-child(3) { color: #79699e; }
+.chart-controls { display: flex; gap: 4px; }
+.chart-controls button { border: 1px solid #e2e6ea; border-radius: 6px; background: #fff; color: #526070; min-width: 28px; height: 28px; padding: 0 6px; font-size: 16px; line-height: 1; }
+.chart-controls .chart-latest { font-size: 11px; }
+.chart-candle-details { display: flex; flex-wrap: wrap; gap: 4px 10px; color: #6f7c8b; font-size: 10px; margin-top: 8px; font-variant-numeric: tabular-nums; }
 .volume-bar { opacity: .65; stroke: none; }
 .ma-line { fill: none; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .ma7 { stroke: #c7aa2a; }.ma25 { stroke: #b6478d; }.ma99 { stroke: #79699e; }
