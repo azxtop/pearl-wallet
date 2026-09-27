@@ -190,6 +190,14 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .trade-active .content { padding-left: 0; padding-right: 0; }
 .trade-page { --trade-green: #5eba89; --trade-red: #e25460; --trade-muted: #92979c; color: #171c1a; padding-bottom: 30px; }
 .trade-page .pair-head, .trade-page .market-summary, .trade-page .intervals, .trade-page .market-tabs, .trade-page .book, .trade-page .recent-trades, .trade-page .exchange-assets-head, .trade-page .exchange-balances, .trade-page .safetrade-connect, .trade-page > .inline-error { margin-left: 18px; margin-right: 18px; }
+.market-source-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin: 14px 18px 5px; padding: 4px; background: #f3f5f4; border-radius: 11px; }
+.market-source-switch button { min-width: 0; border: 0; border-radius: 8px; background: transparent; padding: 9px 7px; text-align: center; color: #828b89; }
+.market-source-switch button.active { background: #fff; box-shadow: 0 1px 5px #14221b14; color: #17201c; }
+.market-source-switch strong, .market-source-switch small { display: block; white-space: nowrap; }
+.market-source-switch strong { font-size: 12px; font-weight: 700; }.market-source-switch small { margin-top: 2px; font-size: 10px; }
+.market-tabs-static { justify-content: space-between; align-items: center; padding: 11px 0; }
+.market-tabs-static strong { font-size: 14px; }.market-tabs-static a { color: #858f8c; font-size: 11px; text-decoration: none; }
+.wprl-source-note { margin: 0 18px 8px; padding: 12px 0; color: #949c99; font-size: 11px; border-top: 1px solid #f0f1f1; }
 .pair-head { padding-top: 13px; padding-bottom: 12px; }
 .pair-head h1 { font-size: 21px; letter-spacing: -.025em; font-weight: 700; }
 .pair-head small { font-size: 11px; margin-top: 2px; color: var(--trade-muted); }

@@ -11,7 +11,7 @@ export type MarketData = {
   updatedAt: number;
 };
 
-export type MarketOverview = Pick<MarketData, 'pair' | 'price' | 'stats24h' | 'depth' | 'trades' | 'marketError' | 'updatedAt'>;
+export type MarketOverview = Pick<MarketData, 'pair' | 'price' | 'stats24h' | 'depth' | 'trades' | 'marketError' | 'updatedAt'> & { liquidityUsd?: number | null };
 export type CandleSeries = Pick<MarketData, 'candles' | 'updatedAt'> & { interval: string };
 export type MarketStreamFrame =
   | { type: 'overview'; data: MarketOverview }
@@ -24,6 +24,7 @@ export type AccountData = {
 };
 
 const API_URL = import.meta.env.VITE_SAFETRADE_API_URL || 'https://pearlwallet.az1993.xyz/api/safetrade';
+const WPRL_API_URL = import.meta.env.VITE_WPRL_API_URL || 'https://pearlwallet.az1993.xyz/api/wprl';
 const TOKEN_KEY = 'pearl-safetrade-connection-v1';
 
 export const savedConnectionToken = () => localStorage.getItem(TOKEN_KEY) || '';
@@ -49,6 +50,9 @@ export const loadMarket = (interval: string) => request<MarketData>(`${API_URL}?
 export const loadMarketOverview = () => request<MarketOverview>(`${API_URL}/overview`);
 export const loadMarketCandles = (interval: string) => request<CandleSeries>(`${API_URL}/candles?interval=${encodeURIComponent(interval)}`);
 export const openMarketStream = () => new WebSocket(`${API_URL.replace(/^http/, 'ws')}/stream`);
+export const loadWprlOverview = () => request<MarketOverview>(`${WPRL_API_URL}/overview`);
+export const loadWprlCandles = (interval: string) => request<CandleSeries>(`${WPRL_API_URL}/candles?interval=${encodeURIComponent(interval)}`);
+export const openWprlStream = () => new WebSocket(`${WPRL_API_URL.replace(/^http/, 'ws')}/stream`);
 export const connectAccount = (key: string, secret: string) => request<{ token: string }>(`${API_URL}/connection`, 'POST', { key, secret });
 export const loadAccount = (token: string) => request<AccountData>(`${API_URL}/account`, 'GET', undefined, token);
 export const accountStreamTicket = (token: string) => request<{ ticket: string }>(`${API_URL}/account-stream-ticket`, 'POST', undefined, token);

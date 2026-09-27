@@ -1,6 +1,6 @@
-# Pearl Wallet 0.2.20
+# Pearl Wallet 0.2.21
 
-Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；SafeTrade 只读展示 PRL/USDT 行情及 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
+Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；Market 可切换 SafeTrade PRL/USDT 与以太坊 Uniswap V3 WPRL/USDT，SafeTrade 还可只读展示 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
 
 ## 已实现
 
@@ -10,8 +10,8 @@ Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账�
 - 每个钱包的上次余额和交易记录保存在本机，切换钱包或重启后先显示缓存并同步链上数据。缓存只用于展示，转账须等待新同步完成；离开设置页或切到后台会隐藏已显示的助记词并清空敏感输入。
 - 转账广播成功后，在本机保存交易 ID、所花输入和找零金额；浏览器尚未列出 0 确认转出时，Activity 立即显示待确认记录，余额显示估算找零，并阻止复用已广播的输入。浏览器同步完成后以链上数据为准。
 - App 前台每 5 秒用主浏览器扫描余额和 UTXO，仅在结果变化时读取交易历史；尝试连接浏览器 SSE，断线后逐步延长重连时间。主浏览器请求失败后暂停 60 秒起，切到备用浏览器并放慢检查，冷却结束后自动重试主浏览器。App 进入手机后台时暂停连接与轮询，返回前台立即同步。
-- SafeTrade 页面展示 PRL/USDT 官方 K 线、24 小时行情、左右并排买卖盘和市场最新成交。K 线可切换周期、双指缩放、横向拖动和点选查看单根详情；服务器读取最近 300 根历史数据。公开行情不需要个人 API Key。用户可在 App 输入自己的只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PRL、USDT 余额；可在 App 中断开并撤销令牌。不含下单和提款功能。
-- 常规页面允许系统截屏；创建和导入钱包的助记词界面，以及 Setting 中显示助记词时，Android 启用防截屏。SafeTrade 前台每 5 秒更新公开行情，服务器按端点缓存 5–10 秒。
+- Market 页面可切换 SafeTrade PRL/USDT 与以太坊 Uniswap V3 WPRL/USDT。SafeTrade 展示 K 线、24 小时行情、左右并排买卖盘和最新成交；WPRL 展示指定链上交易池的 K 线、流动性和成交。K 线可切换周期、双指缩放、横向拖动和点选查看单根详情；服务器读取最近 300 根历史数据。公开行情不需要个人 API Key。用户可在 App 输入自己的 SafeTrade 只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PRL、USDT 余额；可在 App 中断开并撤销令牌。不含下单和提款功能。
+- 常规页面允许系统截屏；创建和导入钱包的助记词界面，以及 Setting 中显示助记词时，Android 启用防截屏。SafeTrade 前台每 5 秒更新公开行情，服务器按端点缓存 5–10 秒；WPRL 前台接收链上成交推送，并定时核对公开行情。
 - 检查 HTTPS 版本清单、下载并校验 APK 的 SHA-256，再交给 Android 安装。更新 APK 必须与已安装应用使用同一签名密钥。
 
 ## 构建
@@ -26,7 +26,7 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.20-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.20-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.21-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.21-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 
@@ -41,6 +41,8 @@ APK 位于 `releases/`。`PearlWallet-0.2.20-debug.apk` 可覆盖此前安装的
 服务端持续订阅 SafeTrade 的公开 WebSocket 行情、盘口增量和成交，按序号维护盘口，并通过 `/api/safetrade/stream` 将增量推送给前台 App。历史 K 线仍通过 REST 获取，当前 K 线由实时成交更新，并定期用 REST 校正。账户余额使用 SafeTrade 私有 WebSocket 事件触发只读 REST 核对；App 先凭连接令牌换取一次性短期票据，再连接 `/api/safetrade/account-stream`。断线时自动重连，REST 定时刷新继续兜底。WebSocket 服务端需通过 Nginx 转发 Upgrade 请求。
 
 新服务器 `104.160.38.45` 使用 `deploy/install-api-runtime.sh` 安装独立的 Node 24 运行环境，以 `deploy/pearlwallet-api.service` 启动服务，只监听 `127.0.0.1:8788`；专用 Nginx 虚拟主机配置见 `deploy/nginx-pearlwallet.conf`。部署时先执行 `nginx -t`，通过后重载。服务端加密密钥位于 `/var/lib/pearlwallet/credential-key`，不上传到仓库。SafeTrade 已放行该服务器 IP，HTTPS 行情、盘口、市场成交和只读账户连接均已实测成功。
+
+WPRL 行情使用以太坊主网 Uniswap V3 的 WPRL/USDT 交易池 `0x89a67c6dee35db9815da2fb9191f0998a8b37c39`。服务端用 GeckoTerminal 公开接口补历史 K 线与概览，通过 Infura 以太坊 RPC 和 WebSocket 订阅该池的 `Swap` 日志，推送最新成交并更新当前 K 线；`GET /api/wprl/overview`、`GET /api/wprl/candles?interval=1m` 与 `/api/wprl/stream` 分别提供概览、历史 K 线和推送。运行时设置 `WPRL_ENABLED=1`、`PEARL_INFURA_KEYS_DB` 指向仅服务账号可读的 SQLite 文件；文件须含 `infura_keys(api_key, available)` 表。RPC Key 只保存在服务器，绝不可提交仓库或放进 `VITE_*` 变量。WPRL 与 PRL 是不同资产，图表和成交分别按来源缓存。
 
 ## 已知限制
 

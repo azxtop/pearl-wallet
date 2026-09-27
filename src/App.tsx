@@ -15,15 +15,16 @@ import { broadcastPearlTx } from "./lib/rpc";
 import { prepareSend, type SendPreview } from "./lib/send";
 import type { EncryptedWallet } from "./lib/keystore";
 import { BIOMETRIC_ADDRESS_KEY, loadProfiles, profileName, saveProfiles, type ProfileStore, type WalletProfile } from "./lib/profiles";
-import { accountStreamTicket, clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadMarketCandles, loadMarketOverview, openAccountStream, openMarketStream, savedConnectionToken, saveConnectionToken, type AccountData, type MarketData, type MarketStreamFrame } from "./lib/safetrade";
+import { accountStreamTicket, clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadMarketCandles, loadMarketOverview, loadWprlCandles, loadWprlOverview, openAccountStream, openMarketStream, openWprlStream, savedConnectionToken, saveConnectionToken, type AccountData, type MarketData, type MarketStreamFrame } from "./lib/safetrade";
 import { chartWindow } from "./lib/chart-window";
-import { loadPublicMarketCache, MARKET_INTERVALS, savePublicMarketCache, type MarketInterval } from "./lib/market-cache";
+import { loadPublicMarketCache, loadWprlMarketCache, MARKET_INTERVALS, savePublicMarketCache, saveWprlMarketCache, type MarketInterval } from "./lib/market-cache";
 import { screenPrivacy } from "./lib/screen-privacy";
 
-type Tab = "wallet" | "safetrade" | "setting";
+type Tab = "wallet" | "market" | "setting";
+type MarketSource = "safetrade" | "wprl";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.20";
+const APP_VERSION = "0.2.21";
 type Interval = MarketInterval;
 const INTERVALS: { id: Interval; label: string }[] = [
   { id: "1m", label: "1分" }, { id: "5m", label: "5分" }, { id: "15m", label: "15分" },
@@ -59,7 +60,7 @@ function Field({ label, value, onChange, type = "text", placeholder, autoComplet
   return <label className="field"><span>{label}</span><input value={value} onChange={(event) => onChange(event.target.value)} type={type} placeholder={placeholder} autoComplete={autoComplete} /></label>;
 }
 
-function CandleChart({ candles, currentPrice, loading = false, status = "" }: { candles: MarketData["candles"]; currentPrice?: number | null; loading?: boolean; status?: string }) {
+function CandleChart({ candles, currentPrice, loading = false, status = "", symbol = "PRL" }: { candles: MarketData["candles"]; currentPrice?: number | null; loading?: boolean; status?: string; symbol?: string }) {
   const [visibleCount, setVisibleCount] = useState(80);
   const [offset, setOffset] = useState(0);
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
@@ -205,7 +206,7 @@ function CandleChart({ candles, currentPrice, loading = false, status = "" }: { 
     {latestY !== null && (!selected || Math.abs((selectedY ?? y(selected.close)) - latestY) > 17) && <span className={`chart-current-price ${latestUp ? "up" : "down"}`} style={{ top: `${latestY / 355 * 100}%` }} aria-label={`当前价格 ${marketNumber(latestPrice, 8)} USDT`}>{marketNumber(latestPrice, 8)}</span>}
     {selected && <span className="chart-inspect-price" style={{ top: `${(selectedY ?? y(selected.close)) / 355 * 100}%` }} aria-label={`指针价格 ${priceAtY(selectedY ?? y(selected.close)).toFixed(priceDigits)} USDT`}>{priceAtY(selectedY ?? y(selected.close)).toFixed(priceDigits)}</span>}
     {gridTimes.filter(({ candle }) => candle).map(({ x, candle }) => <span key={x} className="chart-time-label" style={{ left: `${x / 640 * 100}%` }}>{timeLabel(candle!.time)}</span>)}
-    {selected && <div className={`chart-detail-popup ${selectedX > 320 ? "on-left" : "on-right"}`}><div>时间 <strong>{timeLabel(selected.time)}</strong></div><div>开 <strong>{marketNumber(selected.open, 8)}</strong></div><div>高 <strong>{marketNumber(selected.high, 8)}</strong></div><div>低 <strong>{marketNumber(selected.low, 8)}</strong></div><div>收 <strong>{marketNumber(selected.close, 8)}</strong></div><div>涨跌 <strong className={selected.close >= selected.open ? "positive" : "negative"}>{marketNumber(selected.close - selected.open, 8)}</strong></div><div>量 <strong>{compactMarketNumber(selected.volume)} PRL</strong></div></div>}
+    {selected && <div className={`chart-detail-popup ${selectedX > 320 ? "on-left" : "on-right"}`}><div>时间 <strong>{timeLabel(selected.time)}</strong></div><div>开 <strong>{marketNumber(selected.open, 8)}</strong></div><div>高 <strong>{marketNumber(selected.high, 8)}</strong></div><div>低 <strong>{marketNumber(selected.low, 8)}</strong></div><div>收 <strong>{marketNumber(selected.close, 8)}</strong></div><div>涨跌 <strong className={selected.close >= selected.open ? "positive" : "negative"}>{marketNumber(selected.close - selected.open, 8)}</strong></div><div>量 <strong>{compactMarketNumber(selected.volume)} {symbol}</strong></div></div>}
     </div>
   </div>;
 }
@@ -226,8 +227,8 @@ function OrderBook({ depth }: { depth: MarketData["depth"] | undefined }) {
   return <div className="book">{asks.length || bids.length ? <><div className="book-ratio"><span>买盘</span><div className="book-ratio-track"><i style={{ width: `${100 * bids.reduce((sum, level) => sum + level.amount, 0) / Math.max(1, [...bids, ...asks].reduce((sum, level) => sum + level.amount, 0))}%` }} /></div><span>卖盘</span></div><div className="book-columns"><div className="book-side"><div className="book-side-head"><span>数量 PRL</span><span>买价 USDT</span></div>{bids.map((level) => row(level, "bid"))}</div><div className="book-side"><div className="book-side-head"><span>卖价 USDT</span><span>数量 PRL</span></div>{asks.map((level) => row(level, "ask"))}</div></div><div className="book-spread">价差 {asks.length && bids.length ? marketNumber(asks[0]!.price - bids[0]!.price, 8) : "—"} USDT</div></> : <div className="market-empty">暂无盘口数据</div>}</div>;
 }
 
-function RecentTrades({ trades }: { trades: MarketData["trades"] | undefined }) {
-  return <div className="recent-trades"><div className="book-labels"><span>时间</span><span>价格 (USDT)</span><span>数量 (PRL)</span></div>{trades?.length ? trades.map((trade) => <div className="trade-row" key={trade.id}><span>{new Date(trade.time * 1000).toLocaleTimeString("zh-CN", { hour12: false })}</span><span className={trade.side === "buy" ? "positive" : "negative"}>{marketNumber(trade.price, 8)}</span><span>{marketNumber(trade.amount, 4)}</span></div>) : <div className="market-empty">暂无成交记录</div>}</div>;
+function RecentTrades({ trades, symbol = "PRL" }: { trades: MarketData["trades"] | undefined; symbol?: string }) {
+  return <div className="recent-trades"><div className="book-labels"><span>时间</span><span>价格 (USDT)</span><span>数量 ({symbol})</span></div>{trades?.length ? trades.map((trade) => <div className="trade-row" key={trade.id}><span>{new Date(trade.time * 1000).toLocaleTimeString("zh-CN", { hour12: false })}</span><span className={trade.side === "buy" ? "positive" : "negative"}>{marketNumber(trade.price, 8)}</span><span>{marketNumber(trade.amount, 4)}</span></div>) : <div className="market-empty">暂无成交记录</div>}</div>;
 }
 
 export default function App() {
@@ -243,6 +244,7 @@ export default function App() {
     return localStorage.getItem(UNLOCK_KEY) === "false" && active?.kind === "wallet" && active.addresses.length ? active.addresses : null;
   });
   const [tab, setTab] = useState<Tab>("wallet");
+  const [marketSource, setMarketSource] = useState<MarketSource>(() => localStorage.getItem("pearl-market-source-v1") === "wprl" ? "wprl" : "safetrade");
   const [walletPage, setWalletPage] = useState<WalletPage>("home");
   const [snapshotCache, setSnapshotCache] = useState<SnapshotCache>(loadSnapshotCache);
   const [pendingOutgoing, setPendingOutgoing] = useState(loadPendingOutgoing);
@@ -258,6 +260,14 @@ export default function App() {
   const [publicMarket, setPublicMarket] = useState(loadPublicMarketCache);
   const publicMarketRef = useRef(publicMarket);
   publicMarketRef.current = publicMarket;
+  const [wprlMarket, setWprlMarket] = useState(loadWprlMarketCache);
+  const wprlMarketRef = useRef(wprlMarket);
+  wprlMarketRef.current = wprlMarket;
+  const [wprlError, setWprlError] = useState("");
+  const [wprlRefreshing, setWprlRefreshing] = useState(false);
+  const wprlOverviewRequest = useRef<Promise<void> | null>(null);
+  const wprlCandleRequests = useRef(new Map<Interval, Promise<void>>());
+  const wprlSocket = useRef<WebSocket | null>(null);
   const [overviewError, setOverviewError] = useState("");
   const [candleError, setCandleError] = useState("");
   const [marketRefreshing, setMarketRefreshing] = useState(false);
@@ -286,6 +296,18 @@ export default function App() {
     depth: overview?.depth ?? { asks: [], bids: [] }, trades: overview?.trades ?? [],
     marketError: overview?.marketError ?? null, updatedAt: Math.max(overview?.updatedAt ?? 0, currentSeries?.updatedAt ?? 0),
   } : null;
+  const wprlSeries = wprlMarket.series[interval];
+  const wprlOverview = wprlMarket.overview;
+  const wprlExchange: MarketData | null = wprlOverview || wprlSeries ? {
+    pair: "WPRL/USDT", price: wprlOverview?.price ?? wprlSeries?.candles.at(-1)?.close ?? null,
+    stats24h: wprlOverview?.stats24h ?? null, candles: wprlSeries?.candles ?? [],
+    depth: { asks: [], bids: [] }, trades: wprlOverview?.trades ?? [],
+    marketError: wprlOverview?.marketError ?? null, updatedAt: Math.max(wprlOverview?.updatedAt ?? 0, wprlSeries?.updatedAt ?? 0),
+  } : null;
+  const isWprl = marketSource === "wprl";
+  const activeSeries = isWprl ? wprlSeries : currentSeries;
+  const activeExchange = isWprl ? wprlExchange : exchange;
+  const activeMarketError = isWprl ? wprlError : exchangeError;
   const [marketDetails, setMarketDetails] = useState<"depth" | "trades">("depth");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -398,6 +420,41 @@ export default function App() {
   }, []);
 
   useEffect(() => { savePublicMarketCache(publicMarket); }, [publicMarket]);
+  useEffect(() => { saveWprlMarketCache(wprlMarket); }, [wprlMarket]);
+  useEffect(() => { localStorage.setItem("pearl-market-source-v1", marketSource); }, [marketSource]);
+
+  const refreshWprlOverview = useCallback(() => {
+    if (wprlOverviewRequest.current) return wprlOverviewRequest.current;
+    const pending = loadWprlOverview().then((data) => {
+      setWprlMarket((previous) => !previous.overview || data.updatedAt > previous.overview.updatedAt
+        ? { ...previous, overview: data } : previous);
+      setWprlError("");
+    }).catch(() => setWprlError("WPRL 行情暂不可用"))
+      .finally(() => { wprlOverviewRequest.current = null; });
+    wprlOverviewRequest.current = pending;
+    return pending;
+  }, []);
+
+  const refreshWprlCandles = useCallback((target: Interval, visible = true) => {
+    const existing = wprlCandleRequests.current.get(target);
+    if (existing) return existing;
+    if (visible && target === activeInterval.current) setWprlRefreshing(true);
+    const pending = loadWprlCandles(target).then((series) => {
+      if (series.interval !== target) throw new Error("K 线周期不匹配");
+      setWprlMarket((previous) => {
+        const current = previous.series[target];
+        return !current || series.updatedAt > current.updatedAt || (series.candles.at(-1)?.time ?? 0) > (current.candles.at(-1)?.time ?? 0)
+          ? { ...previous, series: { ...previous.series, [target]: series } } : previous;
+      });
+      setWprlError("");
+    }).catch(() => setWprlError("WPRL K 线暂不可用"))
+      .finally(() => {
+        wprlCandleRequests.current.delete(target);
+        if (target === activeInterval.current) setWprlRefreshing(false);
+      });
+    wprlCandleRequests.current.set(target, pending);
+    return pending;
+  }, []);
 
   const refreshOverview = useCallback(() => {
     if (overviewRequest.current) return overviewRequest.current;
@@ -553,7 +610,7 @@ export default function App() {
   }, [tab, addresses, backupMnemonic, addingProfile, activeProfile, setupMode, showMnemonic]);
 
   useEffect(() => {
-    if (tab !== "safetrade") return;
+    if (tab !== "market" || marketSource !== "safetrade") return;
     let socket: WebSocket | null = null;
     let reconnect: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
@@ -633,7 +690,7 @@ export default function App() {
     connect();
     document.addEventListener("visibilitychange", onVisibility);
     return () => { stopped = true; close(); document.removeEventListener("visibilitychange", onVisibility); };
-  }, [tab, refreshOverview, refreshCandles]);
+  }, [tab, marketSource, refreshOverview, refreshCandles]);
 
   useEffect(() => {
     const socket = marketSocket.current;
@@ -641,7 +698,7 @@ export default function App() {
   }, [interval]);
 
   useEffect(() => {
-    if (tab !== "safetrade") return;
+    if (tab !== "market" || marketSource !== "safetrade") return;
     void refreshOverview();
     const timer = setInterval(() => {
       if (document.hidden) return;
@@ -651,10 +708,10 @@ export default function App() {
       }
     }, 5_000);
     return () => clearInterval(timer);
-  }, [tab, refreshOverview]);
+  }, [tab, marketSource, refreshOverview]);
 
   useEffect(() => {
-    if (tab !== "safetrade") return;
+    if (tab !== "market" || marketSource !== "safetrade") return;
     setCandleError("");
     void refreshCandles(interval);
     const timer = setInterval(() => {
@@ -665,10 +722,10 @@ export default function App() {
       }
     }, 5_000);
     return () => clearInterval(timer);
-  }, [tab, interval, refreshCandles]);
+  }, [tab, marketSource, interval, refreshCandles]);
 
   useEffect(() => {
-    if (tab !== "safetrade" || !currentSeries) return;
+    if (tab !== "market" || marketSource !== "safetrade" || !currentSeries) return;
     let canceled = false;
     const timer = setTimeout(() => {
       void (async () => {
@@ -680,10 +737,113 @@ export default function App() {
       })();
     }, 800);
     return () => { canceled = true; clearTimeout(timer); };
-  }, [tab, interval, !!currentSeries, refreshCandles]);
+  }, [tab, marketSource, interval, !!currentSeries, refreshCandles]);
 
   useEffect(() => {
-    if (tab !== "safetrade" || !connectionToken) return;
+    if (tab !== "market" || marketSource !== "wprl") return;
+    let socket: WebSocket | null = null;
+    let reconnect: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    let retryMs = 1000;
+    const close = () => {
+      if (reconnect) clearTimeout(reconnect);
+      reconnect = null;
+      socket?.close();
+      socket = null;
+      wprlSocket.current = null;
+    };
+    const connect = () => {
+      if (stopped || document.hidden || socket) return;
+      const current = openWprlStream();
+      socket = current;
+      current.onopen = () => {
+        if (socket !== current) return;
+        wprlSocket.current = current;
+        current.send(JSON.stringify({ type: "subscribe", interval: activeInterval.current }));
+        retryMs = 1000;
+        void refreshWprlOverview();
+        void refreshWprlCandles(activeInterval.current, false);
+      };
+      current.onmessage = ({ data }) => {
+        let frame: MarketStreamFrame;
+        try { frame = JSON.parse(String(data)) as MarketStreamFrame; } catch { return; }
+        if (frame.type === "overview" && frame.data?.pair === "WPRL/USDT" && Number.isFinite(frame.data.updatedAt)) {
+          setWprlMarket((previous) => !previous.overview || frame.data.updatedAt > previous.overview.updatedAt
+            ? { ...previous, overview: frame.data } : previous);
+          setWprlError("");
+        }
+        if (frame.type === "overview-patch" && Number.isFinite(frame.data?.updatedAt)) {
+          setWprlMarket((previous) => previous.overview && frame.data.updatedAt > previous.overview.updatedAt
+            ? { ...previous, overview: { ...previous.overview, ...frame.data } } : previous);
+        }
+        if (frame.type === "candle" && MARKET_INTERVALS.includes(frame.interval as Interval)
+          && Number.isFinite(frame.candle?.time) && Number.isFinite(frame.candle?.close)) {
+          const target = frame.interval as Interval;
+          setWprlMarket((previous) => {
+            const series = previous.series[target];
+            if (!series?.candles.length || frame.updatedAt <= series.updatedAt) return previous;
+            const candles = series.candles.slice();
+            const last = candles.at(-1)!;
+            if (frame.candle.time < last.time) return previous;
+            if (frame.candle.time === last.time) candles[candles.length - 1] = frame.candle;
+            else { candles.push(frame.candle); if (candles.length > 300) candles.shift(); }
+            return { ...previous, series: { ...previous.series, [target]: { ...series, candles, updatedAt: frame.updatedAt } } };
+          });
+        }
+      };
+      current.onerror = () => current.close();
+      current.onclose = () => {
+        if (socket !== current) return;
+        socket = null;
+        wprlSocket.current = null;
+        if (stopped || document.hidden) return;
+        reconnect = setTimeout(connect, retryMs);
+        retryMs = Math.min(retryMs * 2, 30_000);
+      };
+    };
+    const onVisibility = () => {
+      if (document.hidden) close();
+      else { void refreshWprlOverview(); void refreshWprlCandles(activeInterval.current, false); connect(); }
+    };
+    void refreshWprlOverview();
+    void refreshWprlCandles(activeInterval.current);
+    connect();
+    const overviewTimer = setInterval(() => { if (!document.hidden) void refreshWprlOverview(); }, 15_000);
+    const candleTimer = setInterval(() => { if (!document.hidden) void refreshWprlCandles(activeInterval.current, false); }, 30_000);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stopped = true;
+      close();
+      clearInterval(overviewTimer);
+      clearInterval(candleTimer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [tab, marketSource, refreshWprlOverview, refreshWprlCandles]);
+
+  useEffect(() => {
+    if (tab !== "market" || marketSource !== "wprl") return;
+    const socket = wprlSocket.current;
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "subscribe", interval }));
+    void refreshWprlCandles(interval);
+  }, [tab, marketSource, interval, refreshWprlCandles]);
+
+  useEffect(() => {
+    if (tab !== "market" || marketSource !== "wprl" || !wprlSeries) return;
+    let canceled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        for (const other of MARKET_INTERVALS) {
+          if (canceled || document.hidden || other === interval || wprlMarketRef.current.series[other]) continue;
+          await refreshWprlCandles(other, false);
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+        }
+      })();
+    }, 1000);
+    return () => { canceled = true; clearTimeout(timer); };
+  }, [tab, marketSource, interval, !!wprlSeries, refreshWprlCandles]);
+
+  useEffect(() => {
+    if (tab !== "market" || marketSource !== "safetrade" || !connectionToken) return;
     let socket: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
@@ -750,7 +910,7 @@ export default function App() {
     }, 10_000);
     document.addEventListener("visibilitychange", onVisibility);
     return () => { stopped = true; close(); clearInterval(timer); document.removeEventListener("visibilitychange", onVisibility); };
-  }, [tab, connectionToken, refreshSafeTradeAccount]);
+  }, [tab, marketSource, connectionToken, refreshSafeTradeAccount]);
 
   useEffect(() => { biometric.status().then(setBiometricStatus).catch(() => {}); }, []);
 
@@ -1103,7 +1263,7 @@ export default function App() {
     setPullDistance(0);
   }
 
-  return <div className={`app ${tab === "safetrade" ? "trade-active" : ""}`} onContextMenu={(event) => { if (!(event.target instanceof HTMLElement) || !event.target.closest("input, textarea, .secret-phrase")) event.preventDefault(); }}>
+  return <div className={`app ${tab === "market" ? "trade-active" : ""}`} onContextMenu={(event) => { if (!(event.target instanceof HTMLElement) || !event.target.closest("input, textarea, .secret-phrase")) event.preventDefault(); }}>
     <main className="content">
       {tab === "wallet" && (!activeProfile || addingProfile) && <section className="onboarding">
         {addingProfile && <button className="back" aria-label="取消添加钱包" onClick={() => { setAddingProfile(false); setWalletName(""); setPassword(""); setInputMnemonic(""); setAddresses(activeProfile?.kind === "watch" ? [activeProfile.address] : !requireUnlock && activeProfile?.kind === "wallet" && activeProfile.addresses.length ? activeProfile.addresses : null); setAutoFingerAttempted(false); }}><Icon name="back" /></button>}
@@ -1152,18 +1312,20 @@ export default function App() {
         {walletPage === "history" && <div className="history-list">{!visibleActivities.length && <div className="empty-card">暂无链上交易</div>}{visibleActivities.map((item) => <div className="activity" key={item.txid}><span className="activity-icon"><Icon name={item.deltaGrains >= 0n ? "receive" : "send"} size={18} /></span><div><strong>{item.deltaGrains >= 0n ? "Received" : "Sent"}</strong><small>{projected?.staleTxids.has(item.txid.toLowerCase()) ? "待核对" : item.confirmations === 0 ? "待确认" : item.time ? new Date(item.time * 1000).toLocaleString("zh-CN") : "时间未知"}<br />{item.txid.slice(0, 16)}…</small></div><em className={item.deltaGrains >= 0n ? "positive" : "negative"}>{item.deltaGrains >= 0n ? "+" : ""}{formatPrl(item.deltaGrains)} PRL</em></div>)}</div>}
       </section>}
 
-      {tab === "safetrade" && <section className="trade-page">
-        <div className="pair-head"><div><h1>PRL/USDT</h1><small>SafeTrade 现货</small></div><button className="market-refresh" aria-label="刷新行情" onClick={refreshExchange}><Icon name="refresh" size={19} /></button></div>
-        <div className="market-summary"><div className="market-last"><strong className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{marketNumber(exchange?.price, 8)}</strong><span>USDT <em className={(exchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{exchange?.stats24h?.changePercent == null ? "" : `${exchange.stats24h.changePercent >= 0 ? "+" : ""}${exchange.stats24h.changePercent.toFixed(2)}%`}</em></span></div><div className="market-stats"><div><span>24h 最高</span><strong>{marketNumber(exchange?.stats24h?.high, 8)}</strong></div><div><span>24h 最低</span><strong>{marketNumber(exchange?.stats24h?.low, 8)}</strong></div><div><span>24h 成交量</span><strong>{compactMarketNumber(exchange?.stats24h?.volume)} PRL</strong></div><div><span>24h 成交额</span><strong>{compactMarketNumber(exchange?.stats24h?.turnover)} USDT</strong></div></div></div>
+      {tab === "market" && <section className="trade-page">
+        <div className="market-source-switch" aria-label="行情来源"><button className={!isWprl ? "active" : ""} onClick={() => setMarketSource("safetrade")}><strong>PRL/USDT</strong><small>SafeTrade</small></button><button className={isWprl ? "active" : ""} onClick={() => setMarketSource("wprl")}><strong>WPRL/USDT</strong><small>Ethereum · Uniswap</small></button></div>
+        <div className="pair-head"><div><h1>{isWprl ? "WPRL/USDT" : "PRL/USDT"}</h1><small>{isWprl ? "以太坊 · Uniswap V3" : "SafeTrade 现货"}</small></div><button className="market-refresh" aria-label="刷新行情" onClick={() => { if (isWprl) { void refreshWprlOverview(); void refreshWprlCandles(interval); } else refreshExchange(); }}><Icon name="refresh" size={19} /></button></div>
+        <div className="market-summary"><div className="market-last"><strong className={(activeExchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{marketNumber(activeExchange?.price, 8)}</strong><span>USDT <em className={(activeExchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{activeExchange?.stats24h?.changePercent == null ? "" : `${activeExchange.stats24h.changePercent >= 0 ? "+" : ""}${activeExchange.stats24h.changePercent.toFixed(2)}%`}</em></span></div><div className="market-stats"><div><span>24h 最高</span><strong>{marketNumber(activeExchange?.stats24h?.high, 8)}</strong></div><div><span>24h 最低</span><strong>{marketNumber(activeExchange?.stats24h?.low, 8)}</strong></div><div><span>{isWprl ? "池流动性" : "24h 成交量"}</span><strong>{isWprl ? `${compactMarketNumber(wprlOverview?.liquidityUsd)} USD` : `${compactMarketNumber(exchange?.stats24h?.volume)} PRL`}</strong></div><div><span>24h 成交额</span><strong>{compactMarketNumber(activeExchange?.stats24h?.turnover)} USDT</strong></div></div></div>
         <div className="intervals">{INTERVALS.map((option) => <button key={option.id} className={interval === option.id ? "active" : ""} onClick={() => setIntervalValue(option.id)}>{option.label}</button>)}</div>
-        <div className="chart-card"><CandleChart key={interval} candles={currentSeries?.candles ?? []} currentPrice={exchange?.price} loading={marketRefreshing} status={currentSeries && Date.now() - currentSeries.updatedAt > 15_000 ? marketRefreshing ? "正在同步" : `更新于 ${new Date(currentSeries.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""} /></div>
-        {exchangeError && <div className="inline-error">{exchangeError}<button onClick={refreshExchange}>重试</button></div>}
-        {exchange?.marketError && <div className="inline-error">{exchange.marketError}</div>}
-        <div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button></div>
-        {marketDetails === "depth" ? <OrderBook depth={exchange?.depth} /> : <RecentTrades trades={exchange?.trades} />}
+        <div className="chart-card"><CandleChart key={`${marketSource}:${interval}`} candles={activeSeries?.candles ?? []} currentPrice={activeExchange?.price} loading={isWprl ? wprlRefreshing : marketRefreshing} status={activeSeries && Date.now() - activeSeries.updatedAt > (isWprl ? 45_000 : 15_000) ? `更新于 ${new Date(activeSeries.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""} symbol={isWprl ? "WPRL" : "PRL"} /></div>
+        {activeMarketError && <div className="inline-error">{activeMarketError}<button onClick={() => { if (isWprl) { void refreshWprlOverview(); void refreshWprlCandles(interval); } else refreshExchange(); }}>重试</button></div>}
+        {activeExchange?.marketError && <div className="inline-error">{activeExchange.marketError}</div>}
+        {isWprl ? <><div className="market-tabs market-tabs-static"><strong>链上成交</strong><a href="https://www.geckoterminal.com/eth/pools/0x89a67c6dee35db9815da2fb9191f0998a8b37c39" target="_blank" rel="noreferrer">查看交易池 ↗</a></div><RecentTrades trades={wprlExchange?.trades} symbol="WPRL" /><div className="wprl-source-note">Ethereum · Uniswap V3 · WPRL/USDT</div></> : <><div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button></div>{marketDetails === "depth" ? <OrderBook depth={exchange?.depth} /> : <RecentTrades trades={exchange?.trades} />}</>}
+        {!isWprl && <>
         <div className="exchange-assets-head"><h2>现货资产</h2>{connectionToken && <div className="exchange-assets-actions"><button aria-label="刷新现货资产" title="刷新现货资产" onClick={refreshSafeTradeAccount}><Icon name="refresh" size={18} /></button><button aria-label="管理 SafeTrade 连接" title="管理连接" onClick={() => setAccountMenuOpen((open) => !open)}>•••</button>{accountMenuOpen && <div className="account-menu"><button onClick={() => { setAccountMenuOpen(false); void removeSafeTradeConnection(); }}>断开连接</button></div>}</div>}</div>
         {connectionToken ? <div className="exchange-balances">{(["PRL", "USDT"] as const).map((asset) => { const balance = account?.balances[asset]; const approximate = !balance || (asset === "PRL" && exchange?.price == null) ? NaN : asset === "USDT" ? Number(balance.available) : Number(balance.available) * exchange!.price!; return <div className="asset-card" key={asset}><img className="asset-logo" src={asset === "PRL" ? "/pearl-logo.svg" : "/usdt.svg"} alt="" /><div className="asset-info"><strong>{asset}</strong><small>{asset === "PRL" ? "Pearl" : "Tether USD"}</small>{balance && Number(balance.locked) > 0 && <small>挂单占用 {balance.locked}</small>}</div><div className="asset-values"><strong>{balance?.available ?? "—"}</strong><small>{Number.isFinite(approximate) ? `≈ ${marketNumber(approximate, 2)} USDT` : "可用余额"}</small></div></div>; })}</div> : <form className="safetrade-connect" onSubmit={(event) => { event.preventDefault(); void connectSafeTrade(); }}><Field label="只读 API Key" value={safeKey} onChange={setSafeKey} autoComplete="off" /><Field label="API Secret" value={safeSecret} onChange={setSafeSecret} type="password" autoComplete="off" /><button className="primary" disabled={connectingSafeTrade || !safeKey.trim() || !safeSecret.trim()}>{connectingSafeTrade ? "连接中…" : "连接 SafeTrade"}</button><p>密钥仅发送到 Pearl Wallet 服务器，用于读取 PRL 和 USDT 余额。</p></form>}
         {accountError && <div className="inline-error">{accountError}</div>}
+        </>}
       </section>}
 
       {tab === "setting" && <section className="settings-page"><div className="page-title"><h1>Setting</h1></div>
@@ -1178,6 +1340,6 @@ export default function App() {
       </section>}
     </main>
     {(error || notice) && <div className={error ? "toast error" : "toast"} role="status">{error || notice}<button onClick={() => { setError(""); setNotice(""); }}>×</button></div>}
-    <nav className="bottom-nav" aria-label="主导航"><button className={tab === "wallet" ? "selected" : ""} onClick={() => { setTab("wallet"); setError(""); }}><Icon name="wallet" size={22} /><span>Wallet</span></button><button className={tab === "safetrade" ? "selected" : ""} onClick={() => { setTab("safetrade"); setError(""); }}><Icon name="chart" size={22} /><span>SafeTrade</span></button><button className={tab === "setting" ? "selected" : ""} onClick={() => { setTab("setting"); setError(""); }}><Icon name="setting" size={22} /><span>Setting</span></button></nav>
+    <nav className="bottom-nav" aria-label="主导航"><button className={tab === "wallet" ? "selected" : ""} onClick={() => { setTab("wallet"); setError(""); }}><Icon name="wallet" size={22} /><span>Wallet</span></button><button className={tab === "market" ? "selected" : ""} onClick={() => { setTab("market"); setError(""); }}><Icon name="chart" size={22} /><span>Market</span></button><button className={tab === "setting" ? "selected" : ""} onClick={() => { setTab("setting"); setError(""); }}><Icon name="setting" size={22} /><span>Setting</span></button></nav>
   </div>;
 }

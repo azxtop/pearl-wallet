@@ -6,6 +6,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { WebSocketServer, WebSocket } from 'ws';
 import { normalizeCandle, normalizeDepth, normalizePublicTrades, normalizeTicker, PERIODS } from './safetrade-data.mjs';
 import { createSafeTradeFeed } from './safetrade-ws.mjs';
+import { createWprlFeed } from './wprl.mjs';
 
 const HOST = process.env.PEARL_SERVER_HOST || '127.0.0.1';
 const PORT = Number(process.env.PEARL_SERVER_PORT || 8787);
@@ -31,6 +32,8 @@ const accountCache = new Map();
 const connectionAttempts = new Map();
 const streamClients = new Set();
 const streamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const wprlStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const wprlStreamClients = new Set();
 const accountStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 const accountStreamTickets = new Map();
 const accountStreams = new Map();
@@ -101,6 +104,18 @@ const publicFeed = createSafeTradeFeed({
       .sort((a, b) => b.time - a.time).slice(0, 20);
     updateOverview({ trades: merged, price: trades.at(-1)?.price ?? liveOverview?.price ?? null });
     for (const trade of trades) updateCandlesFromTrade(trade);
+  },
+});
+
+const wprlFeed = createWprlFeed({
+  keyDbPath: process.env.PEARL_INFURA_KEYS_DB || '',
+  onFrame: (frame) => {
+    for (const client of wprlStreamClients) {
+      if (client.readyState !== WebSocket.OPEN) continue;
+      if (client.bufferedAmount > 256_000) { client.terminate(); continue; }
+      if (frame.type === 'candle' && frame.interval !== client.marketInterval) continue;
+      client.send(JSON.stringify(frame));
+    }
   },
 });
 
@@ -340,6 +355,16 @@ async function handle(request, response) {
     try { return json(response, 200, JSON.parse(readFileSync(process.env.PEARL_UPDATE_FILE || resolve('server/update.json'), 'utf8'))); }
     catch { return json(response, 503, { error: 'Update metadata unavailable' }); }
   }
+  if (request.method === 'GET' && url.pathname === '/api/wprl/overview') {
+    try { return json(response, 200, await wprlFeed.getOverview()); }
+    catch { return json(response, 503, { error: 'WPRL 行情暂不可用' }); }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/wprl/candles') {
+    const interval = url.searchParams.get('interval') || '1m';
+    if (!PERIODS[interval]) return json(response, 400, { error: 'Unsupported interval' });
+    try { return json(response, 200, await wprlFeed.getCandles(interval)); }
+    catch { return json(response, 503, { error: 'WPRL K 线暂不可用' }); }
+  }
   if (request.method === 'GET' && url.pathname === '/api/safetrade') {
     const interval = url.searchParams.get('interval') || '1m';
     if (!PERIODS[interval]) return json(response, 400, { error: 'Unsupported interval' });
@@ -424,7 +449,7 @@ server.on('upgrade', (request, socket, head) => {
   let pathname;
   try { pathname = new URL(request.url || '/', `http://${HOST}:${PORT}`).pathname; }
   catch { socket.destroy(); return; }
-  if ((origin && !ALLOWED_ORIGINS.has(origin)) || (pathname !== '/api/safetrade/stream' && pathname !== '/api/safetrade/account-stream')) {
+  if ((origin && !ALLOWED_ORIGINS.has(origin)) || (pathname !== '/api/safetrade/stream' && pathname !== '/api/safetrade/account-stream' && pathname !== '/api/wprl/stream')) {
     socket.destroy();
     return;
   }
@@ -442,6 +467,24 @@ server.on('upgrade', (request, socket, head) => {
       client.isAlive = true;
       client.on('pong', () => { client.isAlive = true; });
       startAccountFeed(client, entry.hash, findConnection.get(entry.hash).credentials);
+    });
+    return;
+  }
+  if (pathname === '/api/wprl/stream') {
+    if (wprlStreamClients.size >= 100) { socket.destroy(); return; }
+    wprlStreamServer.handleUpgrade(request, socket, head, (client) => {
+      wprlStreamClients.add(client);
+      client.marketInterval = '1m';
+      client.isAlive = true;
+      client.on('pong', () => { client.isAlive = true; });
+      client.on('message', (message) => {
+        let data;
+        try { data = JSON.parse(String(message)); } catch { return; }
+        if (data?.type === 'subscribe' && PERIODS[data.interval]) client.marketInterval = data.interval;
+      });
+      client.on('close', () => wprlStreamClients.delete(client));
+      const overview = wprlFeed.currentOverview();
+      if (overview) client.send(JSON.stringify({ type: 'overview', data: overview }));
     });
     return;
   }
@@ -463,7 +506,7 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 setInterval(() => {
-  const clients = [...streamClients, ...[...accountStreams.values()].flatMap((group) => [...group])];
+  const clients = [...streamClients, ...wprlStreamClients, ...[...accountStreams.values()].flatMap((group) => [...group])];
   for (const client of clients) {
     if (!client.isAlive) { client.terminate(); continue; }
     client.isAlive = false;
@@ -476,4 +519,5 @@ server.listen(PORT, HOST, function () {
   void overviewData().catch(() => {});
   void candleData('1m').catch(() => {});
   if (process.env.SAFETRADE_WS_DISABLED !== '1') publicFeed.start();
+  if (process.env.WPRL_ENABLED === '1') wprlFeed.start();
 });

@@ -5,6 +5,7 @@ export type MarketInterval = typeof MARKET_INTERVALS[number];
 export type PublicMarketCache = { overview: MarketOverview | null; series: Partial<Record<MarketInterval, CandleSeries>> };
 
 const KEY = 'pearl-public-market-cache-v1';
+const WPRL_KEY = 'pearl-wprl-market-cache-v1';
 const EMPTY = (): PublicMarketCache => ({ overview: null, series: {} });
 const validTime = (value: unknown) => typeof value === 'number' && Number.isFinite(value)
   && value > Date.now() - 7 * 24 * 60 * 60 * 1000 && value <= Date.now() + 60_000;
@@ -41,5 +42,15 @@ export function loadPublicMarketCache(): PublicMarketCache {
 
 export function savePublicMarketCache(cache: PublicMarketCache): void {
   try { localStorage.setItem(KEY, JSON.stringify(cache)); }
+  catch { /* Public cache is optional if storage is full. */ }
+}
+
+export function loadWprlMarketCache(): PublicMarketCache {
+  try { return parsePublicMarketCache(localStorage.getItem(WPRL_KEY)); }
+  catch { return EMPTY(); }
+}
+
+export function saveWprlMarketCache(cache: PublicMarketCache): void {
+  try { localStorage.setItem(WPRL_KEY, JSON.stringify(cache)); }
   catch { /* Public cache is optional if storage is full. */ }
 }
