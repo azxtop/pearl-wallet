@@ -12,7 +12,8 @@ import { WalletSynchronizer } from "./lib/wallet-sync";
 import { loadSnapshotCache, saveSnapshotCache, type SnapshotCache } from "./lib/snapshot-cache";
 import { formatPrl, isValidPearlAddress, parsePrl } from "./lib/pearl";
 import { broadcastPearlTx } from "./lib/rpc";
-import { prepareSend, type SendPreview } from "./lib/send";
+import { maxSpendable, prepareSend, SEND_FEE_RATES, type SendFeeTier, type SendPreview } from "./lib/send";
+import { estimatedSpotAssetsUSDT, totalAssetBalance } from "./lib/asset-balance";
 import type { EncryptedWallet } from "./lib/keystore";
 import { BIOMETRIC_ADDRESS_KEY, loadProfiles, profileName, saveProfiles, type ProfileStore, type WalletProfile } from "./lib/profiles";
 import { accountStreamTicket, clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadMarketCandles, loadMarketOverview, loadWprlCandles, loadWprlOverview, loadHyperliquidCandles, loadHyperliquidOverview, openAccountStream, openMarketStream, openWprlStream, openHyperliquidStream, savedConnectionToken, saveConnectionToken, type AccountData, type MarketData, type MarketStreamFrame } from "./lib/safetrade";
@@ -24,7 +25,7 @@ type Tab = "wallet" | "market" | "setting";
 type MarketSource = "safetrade" | "wprl" | "hyperliquid";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.26";
+const APP_VERSION = "0.2.27";
 const PROJECT_URL = "https://pearlwallet.az1993.xyz/";
 const SOURCE_URL = "https://github.com/azxtop/pearl-wallet";
 const CONTACT_EMAIL = "az1993515909@gmail.com";
@@ -350,6 +351,7 @@ export default function App() {
   const [receiveQr, setReceiveQr] = useState("");
   const [sendAddress, setSendAddress] = useState("");
   const [sendAmount, setSendAmount] = useState("");
+  const [sendFeeTier, setSendFeeTier] = useState<SendFeeTier>("standard");
   const [preview, setPreview] = useState<SendPreview | null>(null);
   const [previewScanSequence, setPreviewScanSequence] = useState<number | null>(null);
   const [authPassword, setAuthPassword] = useState("");
@@ -1180,7 +1182,7 @@ export default function App() {
       if (!snapshotFresh || snapshotError) throw new Error("请先重新同步链上余额");
       if (snapshot.partial) throw new Error("链上交易记录不完整，暂不能安全转账");
       if (!isValidPearlAddress(sendAddress.trim())) throw new Error("Pearl 收款地址无效");
-      setPreview(prepareSend(projected?.availableUtxos ?? snapshot.utxos, sendAddress.trim(), parsePrl(sendAmount.trim()), addresses[0]!));
+      setPreview(prepareSend(projected?.availableUtxos ?? snapshot.utxos, sendAddress.trim(), parsePrl(sendAmount.trim()), addresses[0]!, SEND_FEE_RATES[sendFeeTier]));
       setPreviewScanSequence(walletScanSequence.current);
     } catch (failure) { setError(failure instanceof Error ? failure.message : "无法创建交易预览"); }
   }
@@ -1350,6 +1352,14 @@ export default function App() {
 
   const balanceLabel = projected ? formatPrl(projected.balanceGrains) : "—";
   const visibleActivities = projected?.activities ?? snapshot?.activities ?? [];
+  const sendMax = snapshotFresh && projected && !snapshot?.partial && !snapshotError
+    ? maxSpendable(projected.availableUtxos, SEND_FEE_RATES[sendFeeTier]) : 0n;
+  const spotEstimatedUSDT = estimatedSpotAssetsUSDT(account?.balances, exchange?.price);
+
+  function chooseSendPercent(percent: number) {
+    if (sendMax <= 0n) return;
+    setSendAmount(formatPrl(sendMax * BigInt(percent) / 100n));
+  }
 
   function profilePicker() {
     return <div className="profile-picker">
@@ -1435,7 +1445,15 @@ export default function App() {
       {tab === "wallet" && addresses && !backupMnemonic && !addingProfile && walletPage !== "home" && <section className="subpage">
         <div className="subpage-head"><button className="back" onClick={() => { setWalletPage("home"); setPreview(null); setAuthPassword(""); }}><Icon name="back" /></button><h1>{walletPage === "send" ? "发送 PRL" : walletPage === "receive" ? "接收 PRL" : "全部记录"}</h1></div>
         {walletPage === "receive" && <div className="receive-card"><p className="muted">Pearl 主网地址</p>{receiveQr && <img src={receiveQr} alt="收款地址二维码" className="qr" />}<p className="address-text">{addresses[0]}</p><button className="secondary" onClick={() => copy(addresses[0]!)}><Icon name="copy" size={18} /> 复制地址</button></div>}
-        {walletPage === "send" && !preview && <form className="form-card" onSubmit={makePreview}><p className="muted">可用余额：{snapshotFresh && projected ? formatPrl(projected.availableUtxos.reduce((sum, utxo) => sum + utxo.valueGrains, 0n)) : "—"} PRL</p><Field label="收款地址" value={sendAddress} onChange={setSendAddress} placeholder="prl1…" autoComplete="off" /><Field label="金额（PRL）" value={sendAmount} onChange={setSendAmount} placeholder="0.00000000" /><button className="primary" disabled={!snapshotFresh || !snapshot || !!snapshotError || busy}>预览转账</button></form>}
+        {walletPage === "send" && !preview && <form className="send-form" onSubmit={makePreview}>
+          <div className="send-wallet-card"><div><span>付款钱包</span><strong>{activeProfile?.name ?? "—"}</strong></div><div><span>钱包余额</span><strong>{projected ? `${formatPrl(projected.balanceGrains)} PRL` : "—"}</strong></div></div>
+          <label className="send-field"><span>转账金额</span><div className="send-amount-input"><input value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} inputMode="decimal" placeholder="0.00" autoComplete="off" aria-label="转账金额" /><strong>PRL</strong></div></label>
+          <p className="send-spendable">最多可发送 {snapshotFresh && !snapshot?.partial ? formatPrl(sendMax) : "—"} PRL</p>
+          <div className="send-percent-buttons">{[25, 50, 75, 100].map((percent) => <button key={percent} type="button" disabled={sendMax <= 0n} onClick={() => chooseSendPercent(percent)}>{percent === 100 ? "MAX" : `${percent}%`}</button>)}</div>
+          <label className="send-field"><span>收款地址</span><input value={sendAddress} onChange={(event) => setSendAddress(event.target.value)} placeholder="输入 prl1… 收款地址" autoComplete="off" spellCheck={false} aria-label="收款地址" /></label>
+          <div className="send-fee-section"><span className="send-fee-title">交易手续费</span><div className="send-fee-card"><div className="send-fee-options">{(["priority", "standard", "economy"] as const).map((tier) => <button key={tier} type="button" className={sendFeeTier === tier ? "selected" : ""} aria-pressed={sendFeeTier === tier} onClick={() => setSendFeeTier(tier)}><span>{tier === "priority" ? "⚡" : tier === "standard" ? "◷" : "○"}</span><strong>{tier === "priority" ? "优先" : tier === "standard" ? "标准" : "经济"}</strong><small>{SEND_FEE_RATES[tier].toString()} grains/vB</small></button>)}</div><div className="send-fee-rate"><span>当前费率</span><strong>{formatPrl(SEND_FEE_RATES[sendFeeTier] * 1000n)} PRL/kB</strong></div></div></div>
+          <button className="primary send-preview-button" disabled={!snapshotFresh || !snapshot || !!snapshotError || !!snapshot.partial || busy || !sendAmount.trim() || !sendAddress.trim()}>预览转账</button>
+        </form>}
         {walletPage === "send" && preview && <div className="form-card"><p className="eyebrow">CONFIRM TRANSACTION</p><h2>请核对转账信息</h2><div className="preview-row"><span>收款地址</span><strong className="break">{preview.destination}</strong></div><div className="preview-row"><span>转账金额</span><strong>{formatPrl(BigInt(preview.amountGrains))} PRL</strong></div><div className="preview-row"><span>预计矿工费</span><strong>{formatPrl(BigInt(preview.feeGrains))} PRL</strong></div><div className="preview-row"><span>找零</span><strong>{formatPrl(BigInt(preview.changeGrains))} PRL</strong></div><Field label="钱包密码" value={authPassword} onChange={setAuthPassword} type="password" autoComplete="current-password" /><button className="primary" disabled={busy || !authPassword} onClick={() => confirmSend(false)}>{busy ? "正在发送…" : "确认并发送"}</button>{fingerprintEnabled && <button className="secondary wide" disabled={busy} onClick={() => confirmSend(true)}><Icon name="finger" size={18} /> 使用指纹确认</button>}<button className="text-button" onClick={() => { setPreview(null); setAuthPassword(""); }}>返回修改</button></div>}
         {walletPage === "history" && <div className="history-list">{!visibleActivities.length && <div className="empty-card">暂无链上交易</div>}{visibleActivities.map((item) => <div className="activity" key={item.txid}><span className="activity-icon"><Icon name={item.deltaGrains >= 0n ? "receive" : "send"} size={18} /></span><div><strong>{item.deltaGrains >= 0n ? "Received" : "Sent"}</strong><small>{projected?.staleTxids.has(item.txid.toLowerCase()) ? "待核对" : item.confirmations === 0 ? "待确认" : item.time ? new Date(item.time * 1000).toLocaleString("zh-CN") : "时间未知"}<br />{item.txid.slice(0, 16)}…</small></div><em className={item.deltaGrains >= 0n ? "positive" : "negative"}>{item.deltaGrains >= 0n ? "+" : ""}{formatPrl(item.deltaGrains)} PRL</em></div>)}</div>}
       </section>}
@@ -1451,7 +1469,7 @@ export default function App() {
         {isWprl ? <><div className="market-tabs market-tabs-static"><strong>链上成交</strong><a href="https://www.geckoterminal.com/eth/pools/0x89a67c6dee35db9815da2fb9191f0998a8b37c39" target="_blank" rel="noreferrer">查看交易池 ↗</a></div><RecentTrades trades={wprlExchange?.trades} symbol="WPRL" /><div className="wprl-source-note">{wprlSeries?.source === "provider" ? "历史 K 线来自 GeckoTerminal" : wprlSeries?.source === "mixed" ? "起点前 K 线为外部参考，此后持续记录" : "K 线由服务器持续记录"}{(wprlSeries?.recordingSince || wprlOverview?.recordingSince) ? ` · ${new Date((wprlSeries?.recordingSince || wprlOverview?.recordingSince)!).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 起` : ""}</div></> : <><div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button></div>{marketDetails === "depth" ? <OrderBook depth={activeExchange?.depth} symbol={activeSymbol} quote={activeQuote} /> : <RecentTrades trades={activeExchange?.trades} symbol={activeSymbol} quote={activeQuote} />}{isHyperliquid && <div className="wprl-source-note">{hyperliquidTradeSample > 0 ? `高负载模式：最近成交抽样展示，跳过 ${hyperliquidTradeSample} 笔 · ` : ""}K 线由服务器持续记录{hyperliquidSeries?.recordingSince ? ` · ${new Date(hyperliquidSeries.recordingSince * 1000).toLocaleDateString("zh-CN")} 起` : ""}</div>}</>}
         {!isWprl && !isHyperliquid && <>
         <div className="exchange-assets-head"><h2>现货资产</h2>{connectionToken && <div className="exchange-assets-actions"><button aria-label="刷新现货资产" title="刷新现货资产" onClick={refreshSafeTradeAccount}><Icon name="refresh" size={18} /></button><button aria-label="管理 SafeTrade 连接" title="管理连接" onClick={() => setAccountMenuOpen((open) => !open)}>•••</button>{accountMenuOpen && <div className="account-menu"><button onClick={() => { setAccountMenuOpen(false); void removeSafeTradeConnection(); }}>断开连接</button></div>}</div>}</div>
-        {connectionToken ? <div className="exchange-balances">{(["PRL", "USDT"] as const).map((asset) => { const balance = account?.balances[asset]; const approximate = !balance || (asset === "PRL" && exchange?.price == null) ? NaN : asset === "USDT" ? Number(balance.available) : Number(balance.available) * exchange!.price!; return <div className="asset-card" key={asset}><img className="asset-logo" src={asset === "PRL" ? "/pearl-logo.svg" : "/usdt.svg"} alt="" /><div className="asset-info"><strong>{asset}</strong><small>{asset === "PRL" ? "Pearl" : "Tether USD"}</small>{balance && Number(balance.locked) > 0 && <small>挂单占用 {balance.locked}</small>}</div><div className="asset-values"><strong>{balance?.available ?? "—"}</strong><small>{Number.isFinite(approximate) ? `≈ ${marketNumber(approximate, 2)} USDT` : "可用余额"}</small></div></div>; })}</div> : <form className="safetrade-connect" onSubmit={(event) => { event.preventDefault(); void connectSafeTrade(); }}><Field label="只读 API Key" value={safeKey} onChange={setSafeKey} autoComplete="off" /><Field label="API Secret" value={safeSecret} onChange={setSafeSecret} type="password" autoComplete="off" /><button className="primary" disabled={connectingSafeTrade || !safeKey.trim() || !safeSecret.trim()}>{connectingSafeTrade ? "连接中…" : "连接 SafeTrade"}</button><p>密钥仅发送到 Pearl Wallet 服务器，用于读取 PRL 和 USDT 余额。</p></form>}
+        {connectionToken ? <div className="exchange-balances"><div className="exchange-total"><span>预估总资产</span><strong>{spotEstimatedUSDT === null ? "—" : `≈ ${marketNumber(spotEstimatedUSDT, 2)}`} <small>USDT</small></strong></div>{(["PRL", "USDT"] as const).map((asset) => { const balance = account?.balances[asset]; const total = balance ? totalAssetBalance(balance) : null; const approximate = total === null || (asset === "PRL" && exchange?.price == null) ? NaN : asset === "USDT" ? Number(total) : Number(total) * exchange!.price!; return <div className="asset-card" key={asset}><img className="asset-logo" src={asset === "PRL" ? "/pearl-logo.svg" : "/usdt.svg"} alt="" /><div className="asset-info"><strong>{asset}</strong>{balance && Number(balance.locked) > 0 && <small>挂单占用 {balance.locked}</small>}</div><div className="asset-values"><strong>{total ?? "—"}</strong><small>{Number.isFinite(approximate) ? `≈ ${marketNumber(approximate, 2)} USDT` : "余额待更新"}</small></div></div>; })}</div> : <form className="safetrade-connect" onSubmit={(event) => { event.preventDefault(); void connectSafeTrade(); }}><Field label="只读 API Key" value={safeKey} onChange={setSafeKey} autoComplete="off" /><Field label="API Secret" value={safeSecret} onChange={setSafeSecret} type="password" autoComplete="off" /><button className="primary" disabled={connectingSafeTrade || !safeKey.trim() || !safeSecret.trim()}>{connectingSafeTrade ? "连接中…" : "连接 SafeTrade"}</button><p>密钥仅发送到 Pearl Wallet 服务器，用于读取 PRL 和 USDT 余额。</p></form>}
         {accountError && <div className="inline-error">{accountError}</div>}
         </>}
       </section>}

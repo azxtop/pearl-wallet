@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Market adds read-only Hyperliquid BTC/USDC perpetual example with live candles, order book and trades. The server retains one-minute candles and relays one upstream WebSocket to viewers. This is BTC example data, not a PRL contract.\n\nSHA-256: ${hash}`,
+      body: `PRL send screen now shows the active wallet and balance, 25%/50%/75%/MAX amount shortcuts, and three selectable fee rates. The chosen rate is used in the transaction preview. SafeTrade assets show available plus order-locked balances as totals and an estimated combined value in USDT.\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);
