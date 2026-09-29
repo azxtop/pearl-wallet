@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `PRL send screen now shows the active wallet and balance, 25%/50%/75%/MAX amount shortcuts, and three selectable fee rates. The chosen rate is used in the transaction preview. SafeTrade assets show available plus order-locked balances as totals and an estimated combined value in USDT.\n\nSHA-256: ${hash}`,
+      body: `Market now includes read-only Lighter PRL/USDC perpetual data: 1-minute and longer candlesticks, live order book, recent trades, mark and index prices, open interest, and funding rate. The server records Lighter candlesticks and the app displays zero-volume placeholders for recent minutes without trades.\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);

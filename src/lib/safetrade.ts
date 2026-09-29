@@ -11,7 +11,7 @@ export type MarketData = {
   updatedAt: number;
 };
 
-export type MarketOverview = Pick<MarketData, 'pair' | 'price' | 'stats24h' | 'depth' | 'trades' | 'marketError' | 'updatedAt'> & { liquidityUsd?: number | null; recordingSince?: number | null; statsSource?: 'provider' | 'recorded'; contract?: { coin: string; pair: string; quote: string; dex: string | null; example: boolean; szDecimals: number }; markPrice?: number | null; oraclePrice?: number | null; funding?: number | null; openInterest?: number | null };
+export type MarketOverview = Pick<MarketData, 'pair' | 'price' | 'stats24h' | 'depth' | 'trades' | 'marketError' | 'updatedAt'> & { liquidityUsd?: number | null; recordingSince?: number | null; statsSource?: 'provider' | 'recorded'; contract?: { coin: string; pair: string; quote: string; dex?: string | null; example: boolean; szDecimals?: number; marketId?: number }; markPrice?: number | null; oraclePrice?: number | null; funding?: number | null; openInterest?: number | null };
 export type CandleSeries = Pick<MarketData, 'candles' | 'updatedAt'> & { pair?: string; interval: string; source?: 'provider' | 'recorded' | 'mixed'; recordingSince?: number | null; syncedThrough?: number | null };
 export type MarketStreamFrame =
   | { type: 'overview'; data: MarketOverview }
@@ -27,6 +27,7 @@ export type AccountData = {
 const API_URL = import.meta.env.VITE_SAFETRADE_API_URL || 'https://pearlwallet.az1993.xyz/api/safetrade';
 const WPRL_API_URL = import.meta.env.VITE_WPRL_API_URL || 'https://pearlwallet.az1993.xyz/api/wprl';
 const HYPERLIQUID_API_URL = import.meta.env.VITE_HYPERLIQUID_API_URL || 'https://pearlwallet.az1993.xyz/api/hyperliquid';
+const LIGHTER_API_URL = import.meta.env.VITE_LIGHTER_API_URL || 'https://pearlwallet.az1993.xyz/api/lighter';
 const TOKEN_KEY = 'pearl-safetrade-connection-v1';
 
 export const savedConnectionToken = () => localStorage.getItem(TOKEN_KEY) || '';
@@ -58,6 +59,9 @@ export const openWprlStream = () => new WebSocket(`${WPRL_API_URL.replace(/^http
 export const loadHyperliquidOverview = () => request<MarketOverview>(`${HYPERLIQUID_API_URL}/overview`);
 export const loadHyperliquidCandles = (interval: string) => request<CandleSeries>(`${HYPERLIQUID_API_URL}/candles?interval=${encodeURIComponent(interval)}`);
 export const openHyperliquidStream = () => new WebSocket(`${HYPERLIQUID_API_URL.replace(/^http/, 'ws')}/stream`);
+export const loadLighterOverview = () => request<MarketOverview>(`${LIGHTER_API_URL}/overview`);
+export const loadLighterCandles = (interval: string) => request<CandleSeries>(`${LIGHTER_API_URL}/candles?interval=${encodeURIComponent(interval)}`);
+export const openLighterStream = () => new WebSocket(`${LIGHTER_API_URL.replace(/^http/, 'ws')}/stream`);
 export const connectAccount = (key: string, secret: string) => request<{ token: string }>(`${API_URL}/connection`, 'POST', { key, secret });
 export const loadAccount = (token: string) => request<AccountData>(`${API_URL}/account`, 'GET', undefined, token);
 export const accountStreamTicket = (token: string) => request<{ ticket: string }>(`${API_URL}/account-stream-ticket`, 'POST', undefined, token);

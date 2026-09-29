@@ -1,4 +1,4 @@
-# Pearl Wallet 0.2.27
+# Pearl Wallet 0.2.28
 
 **官方网站：** https://pearlwallet.az1993.xyz/ · **Android 下载：** https://github.com/azxtop/pearl-wallet/releases
 
@@ -6,7 +6,7 @@
 
 当前支持助记词导入，尚不支持单独私钥导入。应用未经独立安全审计；只需查看余额与交易时，建议使用观察地址。
 
-Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；Market 可切换 SafeTrade PRL/USDT、以太坊 Uniswap V3 WPRL/USDT 与 Hyperliquid BTC/USDC 永续示例，SafeTrade 还可只读展示 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
+Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；Market 可切换 SafeTrade PRL/USDT、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid BTC/USDC 永续示例与 Lighter PRL/USDC 永续，SafeTrade 还可只读展示 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
 
 ## 已实现
 
@@ -17,7 +17,7 @@ Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账�
 - 转账广播成功后，在本机保存交易 ID、所花输入和找零金额；浏览器尚未列出 0 确认转出时，Activity 立即显示待确认记录，余额显示估算找零，并阻止复用已广播的输入。浏览器同步完成后以链上数据为准。
 - 发送页显示钱包余额、按当前费率计算的最多可发送金额、25%/50%/75%/MAX 快捷金额与经济/标准/优先三档费率。费率分别为 1/2/4 grains/vB，预览按所选费率构造交易并显示实际估算手续费；确认速度不保证。
 - App 前台每 5 秒用主浏览器扫描余额和 UTXO，仅在结果变化时读取交易历史；尝试连接浏览器 SSE，断线后逐步延长重连时间。主浏览器请求失败后暂停 60 秒起，切到备用浏览器并放慢检查，冷却结束后自动重试主浏览器。App 进入手机后台时暂停连接与轮询，返回前台立即同步。
-- Market 页面可切换 SafeTrade PRL/USDT、以太坊 Uniswap V3 WPRL/USDT 与 Hyperliquid BTC/USDC 永续示例。SafeTrade 展示 K 线、24 小时行情、左右并排买卖盘和最新成交；WPRL 展示指定链上交易池的 K 线、流动性和成交；Hyperliquid 展示公开 K 线、盘口、成交、标记价、资金费率和持仓量。K 线可切换周期、双指缩放、横向拖动和点选查看单根详情；服务器返回最近 300 根。公开行情不需要个人 API Key。用户可在 App 输入自己的 SafeTrade 只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PRL、USDT 余额；可在 App 中断开并撤销令牌。不含下单和提款功能。
+- Market 页面可切换 SafeTrade PRL/USDT、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid BTC/USDC 永续示例与 Lighter PRL/USDC 永续。SafeTrade 展示 K 线、24 小时行情、左右并排买卖盘和最新成交；WPRL 展示指定链上交易池的 K 线、流动性和成交；Hyperliquid 与 Lighter 展示公开 K 线、盘口、成交、标记价、资金费率和持仓量。K 线可切换周期、双指缩放、横向拖动和点选查看单根详情；服务器返回最近 300 根。公开行情不需要个人 API Key。用户可在 App 输入自己的 SafeTrade 只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PRL、USDT 余额；可在 App 中断开并撤销令牌。不含下单和提款功能。
 - SafeTrade 现货资产的主数字包含可用余额和挂单占用，另显示两者明细与按 PRL/USDT 现货价计算的预估总资产（USDT）。
 - 常规页面允许系统截屏；创建和导入钱包的助记词界面，以及 Setting 中显示助记词时，Android 启用防截屏。SafeTrade 前台每 5 秒更新公开行情，服务器按端点缓存 5–10 秒；WPRL 前台接收链上成交推送，并定时核对公开行情。
 - 检查 HTTPS 版本清单、下载并校验 APK 的 SHA-256，再交给 Android 安装。更新 APK 必须与已安装应用使用同一签名密钥。
@@ -34,7 +34,7 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.27-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.27-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.28-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.28-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 

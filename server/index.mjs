@@ -9,6 +9,7 @@ import { createSafeTradeFeed } from './safetrade-ws.mjs';
 import { createWprlFeed } from './wprl.mjs';
 import { createHyperliquidFeed } from './hyperliquid.mjs';
 import { createHyperliquidFanout } from './hyperliquid-fanout.mjs';
+import { createLighterFeed } from './lighter.mjs';
 
 const HOST = process.env.PEARL_SERVER_HOST || '127.0.0.1';
 const PORT = Number(process.env.PEARL_SERVER_PORT || 8787);
@@ -38,6 +39,8 @@ const wprlStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 
 const wprlStreamClients = new Set();
 const hyperliquidStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 const hyperliquidFanout = createHyperliquidFanout();
+const lighterStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const lighterFanout = createHyperliquidFanout();
 const accountStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 const accountStreamTickets = new Map();
 const accountStreams = new Map();
@@ -131,6 +134,10 @@ const hyperliquidFeed = createHyperliquidFeed({
   dex: process.env.HYPERLIQUID_DEX || '',
   quote: process.env.HYPERLIQUID_QUOTE || 'USDC',
   onFrame: (frame) => hyperliquidFanout.broadcast(frame),
+});
+const lighterFeed = createLighterFeed({
+  storePath: resolve(DATA_DIR, 'lighter-market.sqlite'),
+  onFrame: (frame) => lighterFanout.broadcast(frame),
 });
 
 function json(response, status, body) {
@@ -392,6 +399,19 @@ async function handle(request, response) {
   if (request.method === 'GET' && url.pathname === '/api/hyperliquid/status') {
     return json(response, 200, { ...hyperliquidFanout.stats(), contract: hyperliquidFeed.contract() });
   }
+  if (request.method === 'GET' && url.pathname === '/api/lighter/overview') {
+    try { return json(response, 200, lighterFeed.getOverview()); }
+    catch { return json(response, 503, { error: 'Lighter 行情暂不可用' }); }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/lighter/candles') {
+    const interval = url.searchParams.get('interval') || '1m';
+    if (!PERIODS[interval]) return json(response, 400, { error: 'Unsupported interval' });
+    try { return json(response, 200, lighterFeed.getCandles(interval)); }
+    catch { return json(response, 503, { error: 'Lighter K 线暂不可用' }); }
+  }
+  if (request.method === 'GET' && url.pathname === '/api/lighter/status') {
+    return json(response, 200, { ...lighterFanout.stats(), contract: lighterFeed.contract() });
+  }
   if (request.method === 'GET' && url.pathname === '/api/safetrade') {
     const interval = url.searchParams.get('interval') || '1m';
     if (!PERIODS[interval]) return json(response, 400, { error: 'Unsupported interval' });
@@ -476,7 +496,7 @@ server.on('upgrade', (request, socket, head) => {
   let pathname;
   try { pathname = new URL(request.url || '/', `http://${HOST}:${PORT}`).pathname; }
   catch { socket.destroy(); return; }
-  if ((origin && !ALLOWED_ORIGINS.has(origin)) || (pathname !== '/api/safetrade/stream' && pathname !== '/api/safetrade/account-stream' && pathname !== '/api/wprl/stream' && pathname !== '/api/hyperliquid/stream')) {
+  if ((origin && !ALLOWED_ORIGINS.has(origin)) || (pathname !== '/api/safetrade/stream' && pathname !== '/api/safetrade/account-stream' && pathname !== '/api/wprl/stream' && pathname !== '/api/hyperliquid/stream' && pathname !== '/api/lighter/stream')) {
     socket.destroy();
     return;
   }
@@ -532,6 +552,23 @@ server.on('upgrade', (request, socket, head) => {
     });
     return;
   }
+  if (pathname === '/api/lighter/stream') {
+    if (lighterFanout.clients.size >= 500) { socket.destroy(); return; }
+    lighterStreamServer.handleUpgrade(request, socket, head, (client) => {
+      lighterFanout.clients.add(client);
+      client.marketInterval = '1m';
+      client.isAlive = true;
+      client.on('pong', () => { client.isAlive = true; });
+      client.on('message', (message) => {
+        let data;
+        try { data = JSON.parse(String(message)); } catch { return; }
+        if (data?.type === 'subscribe' && PERIODS[data.interval]) client.marketInterval = data.interval;
+      });
+      client.on('close', () => lighterFanout.clients.delete(client));
+      try { lighterFanout.send(client, { type: 'overview', data: lighterFeed.getOverview() }); } catch { /* feed starting */ }
+    });
+    return;
+  }
   if (streamClients.size >= 100) { socket.destroy(); return; }
   streamServer.handleUpgrade(request, socket, head, (client) => {
     streamClients.add(client);
@@ -550,7 +587,7 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 setInterval(() => {
-  const clients = [...streamClients, ...wprlStreamClients, ...hyperliquidFanout.clients, ...[...accountStreams.values()].flatMap((group) => [...group])];
+  const clients = [...streamClients, ...wprlStreamClients, ...hyperliquidFanout.clients, ...lighterFanout.clients, ...[...accountStreams.values()].flatMap((group) => [...group])];
   for (const client of clients) {
     if (!client.isAlive) { client.terminate(); continue; }
     client.isAlive = false;
@@ -565,4 +602,5 @@ server.listen(PORT, HOST, function () {
   if (process.env.SAFETRADE_WS_DISABLED !== '1') publicFeed.start();
   if (process.env.WPRL_ENABLED === '1') wprlFeed.start();
   if (process.env.HYPERLIQUID_ENABLED !== '0') void hyperliquidFeed.start();
+  if (process.env.LIGHTER_ENABLED !== '0') void lighterFeed.start();
 });
