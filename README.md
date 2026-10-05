@@ -1,4 +1,4 @@
-# Pearl Wallet 0.2.29
+# Pearl Wallet 0.2.30
 
 **官方网站：** https://pearlwallet.az1993.xyz/ · **Android 下载：** https://github.com/azxtop/pearl-wallet/releases
 
@@ -34,7 +34,7 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.29-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.29-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.30-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.30-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 

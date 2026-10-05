@@ -1,20 +1,20 @@
 import { Capacitor, registerPlugin } from "@capacitor/core";
 
 interface BiometricVaultPlugin {
-  available(): Promise<{ available: boolean; enabled: boolean }>;
-  enable(options: { mnemonic: string }): Promise<{ enabled: boolean }>;
-  authenticate(): Promise<{ mnemonic: string }>;
-  disable(): Promise<{ enabled: boolean }>;
+  available(options: { address: string; legacyAddress: string | null }): Promise<{ available: boolean; enabled: boolean }>;
+  enable(options: { address: string; mnemonic: string }): Promise<{ enabled: boolean }>;
+  authenticate(options: { address: string; legacyAddress: string | null }): Promise<{ mnemonic: string }>;
+  disable(options: { address: string; legacyAddress: string | null }): Promise<{ enabled: boolean }>;
 }
 
 const native = registerPlugin<BiometricVaultPlugin>("BiometricVault");
 
 export const biometric = {
-  async status() {
+  async status(address: string, legacyAddress: string | null) {
     if (!Capacitor.isNativePlatform()) return { available: false, enabled: false };
-    return native.available();
+    return native.available({ address, legacyAddress });
   },
-  enable: (mnemonic: string) => native.enable({ mnemonic }),
-  authenticate: () => native.authenticate(),
-  disable: () => native.disable(),
+  enable: (address: string, mnemonic: string) => native.enable({ address, mnemonic }),
+  authenticate: (address: string, legacyAddress: string | null) => native.authenticate({ address, legacyAddress }),
+  disable: (address: string, legacyAddress: string | null) => native.disable({ address, legacyAddress }),
 };

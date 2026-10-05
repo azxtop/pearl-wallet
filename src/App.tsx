@@ -27,7 +27,7 @@ type Tab = "wallet" | "market" | "setting";
 type MarketSource = "safetrade" | "wprl" | "hyperliquid" | "lighter";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.29";
+const APP_VERSION = "0.2.30";
 const PROJECT_URL = "https://pearlwallet.az1993.xyz/";
 const SOURCE_URL = "https://github.com/azxtop/pearl-wallet";
 const CONTACT_EMAIL = "az1993515909@gmail.com";
@@ -551,7 +551,7 @@ export default function App() {
   const [preview, setPreview] = useState<SendPreview | null>(null);
   const [previewScanSequence, setPreviewScanSequence] = useState<number | null>(null);
   const [authPassword, setAuthPassword] = useState("");
-  const [biometricStatus, setBiometricStatus] = useState({ available: false, enabled: false });
+  const [biometricStatus, setBiometricStatus] = useState<{ address: string | null; available: boolean; enabled: boolean }>({ address: null, available: false, enabled: false });
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [fingerPassword, setFingerPassword] = useState("");
@@ -576,7 +576,7 @@ export default function App() {
   const pullStart = useRef<number | null>(null);
   const pullDistanceRef = useRef(0);
   activeTab.current = tab;
-  const fingerprintEnabled = !!blob && biometricStatus.enabled && biometricAddress === blob.address;
+  const fingerprintEnabled = !!blob && biometricStatus.address === blob.address && biometricStatus.enabled;
 
   function persistProfiles(next: ProfileStore) {
     saveProfiles(next);
@@ -1368,7 +1368,15 @@ export default function App() {
     return () => { stopped = true; close(); clearInterval(timer); document.removeEventListener("visibilitychange", onVisibility); };
   }, [tab, marketSource, connectionToken, refreshSafeTradeAccount]);
 
-  useEffect(() => { biometric.status().then(setBiometricStatus).catch(() => {}); }, []);
+  useEffect(() => {
+    const address = blob?.address;
+    let cancelled = false;
+    setBiometricStatus({ address: null, available: false, enabled: false });
+    if (address) biometric.status(address, biometricAddress)
+      .then((status) => { if (!cancelled) setBiometricStatus({ address, ...status }); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [blob?.address, biometricAddress]);
 
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
@@ -1405,7 +1413,7 @@ export default function App() {
     if (!blob || addresses || !fingerprintEnabled || autoFingerAttempted || tab !== "wallet" || addingProfile) return;
     const generation = walletAccessGeneration.current;
     setAutoFingerAttempted(true);
-    biometric.authenticate().then(async ({ mnemonic }) => {
+    biometric.authenticate(blob.address, biometricAddress).then(async ({ mnemonic }) => {
       if (generation !== walletAccessGeneration.current) return;
       const { addresses: unlocked } = await wallet.unlockBiometric(blob, mnemonic);
       if (generation === walletAccessGeneration.current) setAddresses(unlocked);
@@ -1491,7 +1499,7 @@ export default function App() {
     if (!blob || !fingerprintEnabled) return;
     const generation = walletAccessGeneration.current;
     await run(async () => {
-      const result = await biometric.authenticate();
+      const result = await biometric.authenticate(blob.address, biometricAddress);
       if (generation !== walletAccessGeneration.current) return;
       const unlocked = await wallet.unlockBiometric(blob, result.mnemonic);
       if (generation === walletAccessGeneration.current) setAddresses(unlocked.addresses);
@@ -1517,11 +1525,14 @@ export default function App() {
 
   async function confirmSend(useFinger: boolean) {
     if (!blob || !preview || !addresses) return;
+    const generation = walletAccessGeneration.current;
     await run(async () => {
       if (!snapshotFresh || snapshotError || snapshot?.partial || previewScanSequence !== walletScanSequence.current) throw new Error("链上余额已变化，请重新预览转账");
       if (useFinger && !fingerprintEnabled) throw new Error("当前钱包尚未启用指纹");
-      const auth = useFinger ? { biometricMnemonic: (await biometric.authenticate()).mnemonic } : { password: authPassword };
+      const auth = useFinger ? { biometricMnemonic: (await biometric.authenticate(blob.address, biometricAddress)).mnemonic } : { password: authPassword };
+      if (generation !== walletAccessGeneration.current) return;
       const signed = await wallet.sign(blob, preview, auth);
+      if (generation !== walletAccessGeneration.current) return;
       if (previewScanSequence !== walletScanSequence.current) throw new Error("链上余额已变化，请重新预览转账");
       let txid: string;
       try { txid = await broadcastPearlTx(signed.rawHex); }
@@ -1562,18 +1573,24 @@ export default function App() {
 
   async function toggleBiometric() {
     if (!blob) return;
+    const generation = walletAccessGeneration.current;
+    const address = blob.address;
     await run(async () => {
       if (fingerprintEnabled) {
-        await biometric.disable();
-        localStorage.removeItem(BIOMETRIC_ADDRESS_KEY); setBiometricAddress(null);
-        setBiometricStatus({ ...biometricStatus, enabled: false });
+        await biometric.disable(address, biometricAddress);
+        if (biometricAddress === address) {
+          localStorage.removeItem(BIOMETRIC_ADDRESS_KEY); setBiometricAddress(null);
+        }
+        if (generation !== walletAccessGeneration.current) return;
+        setBiometricStatus({ address, available: biometricStatus.available, enabled: false });
         setNotice("已关闭指纹授权");
       } else {
         if (!fingerPassword) throw new Error("请输入钱包密码");
         const { mnemonic } = await wallet.export(blob, fingerPassword);
-        await biometric.enable(mnemonic);
-        localStorage.setItem(BIOMETRIC_ADDRESS_KEY, blob.address); setBiometricAddress(blob.address);
-        setFingerPassword(""); setBiometricStatus({ ...biometricStatus, enabled: true });
+        if (generation !== walletAccessGeneration.current) return;
+        await biometric.enable(address, mnemonic);
+        if (generation !== walletAccessGeneration.current) return;
+        setFingerPassword(""); setBiometricStatus({ address, available: biometricStatus.available, enabled: true });
         setNotice("已启用指纹授权");
       }
     });

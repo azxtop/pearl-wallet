@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Market now has a full order book for SafeTrade, Hyperliquid, and Lighter, plus server-recorded trade history with time, side, price, and minimum-amount filters and paginated results. Hyperliquid BTC depth is limited to the 20 levels per side supplied by its upstream API.\n\nSHA-256: ${hash}`,
+      body: `Fix biometric unlock for multiple wallets. Each wallet now keeps a separate biometric-protected recovery phrase, and existing single-wallet biometric data remains available after upgrading. A wallet whose biometric data was overwritten by the previous version must be enabled once again using its password.\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);

@@ -1,5 +1,6 @@
 package ai.pearl.localwallet;
 
+import android.content.SharedPreferences;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -39,15 +40,46 @@ public class BiometricVaultPlugin extends Plugin {
                 == BiometricManager.BIOMETRIC_SUCCESS;
     }
 
-    private boolean enabled() {
-        return getContext().getSharedPreferences(PREFS, 0).contains(CIPHERTEXT);
+    private SharedPreferences preferences() {
+        return getContext().getSharedPreferences(PREFS, 0);
+    }
+
+    private String walletAddress(PluginCall call) {
+        String address = call.getString("address");
+        if (address == null || !address.matches("prl1[a-z0-9]{20,120}")) {
+            throw new IllegalArgumentException("钱包地址无效");
+        }
+        return address;
+    }
+
+    private String field(String name, String address) {
+        return name + ":" + address;
+    }
+
+    private boolean legacyWallet(PluginCall call, String address) {
+        return address.equals(call.getString("legacyAddress"));
+    }
+
+    private boolean enabled(PluginCall call, String address) {
+        return preferences().contains(field(CIPHERTEXT, address))
+                || (legacyWallet(call, address) && preferences().contains(CIPHERTEXT));
+    }
+
+    private String stored(PluginCall call, String name, String address) {
+        SharedPreferences prefs = preferences();
+        if (prefs.contains(field(CIPHERTEXT, address))) return prefs.getString(field(name, address), null);
+        return legacyWallet(call, address) ? prefs.getString(name, null) : null;
     }
 
     @PluginMethod
     public void available(PluginCall call) {
         JSObject response = new JSObject();
         response.put("available", canUseBiometric());
-        response.put("enabled", enabled());
+        try {
+            response.put("enabled", enabled(call, walletAddress(call)));
+        } catch (IllegalArgumentException exception) {
+            response.put("enabled", false);
+        }
         call.resolve(response);
     }
 
@@ -97,13 +129,15 @@ public class BiometricVaultPlugin extends Plugin {
                                     } finally {
                                         java.util.Arrays.fill(plaintext, (byte) 0);
                                     }
-                                    getContext().getSharedPreferences(PREFS, 0).edit()
-                                            .putString(IV, Base64.encodeToString(authorized.getIV(), Base64.NO_WRAP))
-                                            .putString(CIPHERTEXT, Base64.encodeToString(encrypted, Base64.NO_WRAP))
-                                            .apply();
+                                    String address = walletAddress(call);
+                                    boolean saved = preferences().edit()
+                                            .putString(field(IV, address), Base64.encodeToString(authorized.getIV(), Base64.NO_WRAP))
+                                            .putString(field(CIPHERTEXT, address), Base64.encodeToString(encrypted, Base64.NO_WRAP))
+                                            .commit();
+                                    if (!saved) throw new IllegalStateException("指纹数据保存失败");
                                     response.put("enabled", true);
                                 } else {
-                                    String encoded = getContext().getSharedPreferences(PREFS, 0).getString(CIPHERTEXT, null);
+                                    String encoded = stored(call, CIPHERTEXT, walletAddress(call));
                                     if (encoded == null) throw new IllegalStateException("未启用指纹授权");
                                     byte[] plaintext = authorized.doFinal(Base64.decode(encoded, Base64.NO_WRAP));
                                     try {
@@ -131,6 +165,7 @@ public class BiometricVaultPlugin extends Plugin {
     @PluginMethod
     public void enable(PluginCall call) {
         String mnemonic = call.getString("mnemonic");
+        try { walletAddress(call); } catch (IllegalArgumentException exception) { call.reject(exception.getMessage()); return; }
         if (!canUseBiometric() || mnemonic == null || mnemonic.isEmpty()) {
             call.reject("指纹不可用或钱包数据为空");
             return;
@@ -146,12 +181,14 @@ public class BiometricVaultPlugin extends Plugin {
 
     @PluginMethod
     public void authenticate(PluginCall call) {
-        if (!enabled() || !canUseBiometric()) {
+        String address;
+        try { address = walletAddress(call); } catch (IllegalArgumentException exception) { call.reject(exception.getMessage()); return; }
+        if (!enabled(call, address) || !canUseBiometric()) {
             call.reject("指纹未启用或不可用");
             return;
         }
         try {
-            String encodedIv = getContext().getSharedPreferences(PREFS, 0).getString(IV, null);
+            String encodedIv = stored(call, IV, address);
             if (encodedIv == null) throw new IllegalStateException("指纹数据损坏");
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
             cipher.init(Cipher.DECRYPT_MODE, key(false), new GCMParameterSpec(128, Base64.decode(encodedIv, Base64.NO_WRAP)));
@@ -164,10 +201,11 @@ public class BiometricVaultPlugin extends Plugin {
     @PluginMethod
     public void disable(PluginCall call) {
         try {
-            getContext().getSharedPreferences(PREFS, 0).edit().clear().apply();
-            KeyStore store = KeyStore.getInstance("AndroidKeyStore");
-            store.load(null);
-            if (store.containsAlias(ALIAS)) store.deleteEntry(ALIAS);
+            String address = walletAddress(call);
+            SharedPreferences.Editor edit = preferences().edit()
+                    .remove(field(IV, address)).remove(field(CIPHERTEXT, address));
+            if (legacyWallet(call, address)) edit.remove(IV).remove(CIPHERTEXT);
+            if (!edit.commit()) throw new IllegalStateException("指纹数据删除失败");
             JSObject response = new JSObject();
             response.put("enabled", false);
             call.resolve(response);
