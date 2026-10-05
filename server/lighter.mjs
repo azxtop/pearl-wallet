@@ -43,6 +43,10 @@ export function createLighterFeed({ storePath, symbol = 'PRL', quote = 'USDC', o
     bids: [...bids].sort((a, b) => b[0] - a[0]).slice(0, 20).map(([price, amount]) => ({ price, amount })),
     asks: [...asks].sort((a, b) => a[0] - b[0]).slice(0, 20).map(([price, amount]) => ({ price, amount })),
   });
+  const fullDepth = () => ({
+    bids: [...bids].sort((a, b) => b[0] - a[0]).slice(0, 200).map(([price, amount]) => ({ price, amount })),
+    asks: [...asks].sort((a, b) => a[0] - b[0]).slice(0, 200).map(([price, amount]) => ({ price, amount })),
+  });
 
   async function get(path) {
     const response = await fetcher(`${API}${path}`, { signal: AbortSignal.timeout(12_000) });
@@ -138,7 +142,7 @@ export function createLighterFeed({ storePath, symbol = 'PRL', quote = 'USDC', o
     update(asks, data.asks); update(bids, data.bids);
     bookNonce = data.nonce; bookReady = true;
     clearTimeout(depthTimer);
-    depthTimer = setTimeout(() => updateOverview({ depth: depth() }), 250);
+    depthTimer = setTimeout(() => { updateOverview({ depth: depth() }); onFrame({ type: 'full-depth', depth: fullDepth(), updatedAt: now() }); }, 250);
   }
 
   function applyTrades(rows) {
@@ -157,7 +161,7 @@ export function createLighterFeed({ storePath, symbol = 'PRL', quote = 'USDC', o
     if (socket?.readyState === WebSocketImpl.OPEN) return;
     const id = market.market_id;
     const [book, recentTrades] = await Promise.all([
-      get(`/orderBookOrders?market_id=${id}&limit=50`), get(`/recentTrades?market_id=${id}&limit=20`),
+      get(`/orderBookOrders?market_id=${id}&limit=200`), get(`/recentTrades?market_id=${id}&limit=20`),
     ]);
     bids.clear(); asks.clear();
     for (const [map, rows] of [[bids, book.bids], [asks, book.asks]]) for (const row of rows ?? []) {
@@ -166,6 +170,7 @@ export function createLighterFeed({ storePath, symbol = 'PRL', quote = 'USDC', o
     }
     applyTrades(recentTrades.trades);
     updateOverview({ depth: depth() });
+    onFrame({ type: 'full-depth', depth: fullDepth(), updatedAt: now() });
   }
 
   function connect() {
@@ -229,5 +234,5 @@ export function createLighterFeed({ storePath, symbol = 'PRL', quote = 'USDC', o
     return { pair: pair(), interval, candles: recent.all(market.market_id, interval).reverse().map((row) => ({ ...row, empty: !!row.empty })), updatedAt: now(), source: 'recorded', recordingSince: recordingSince(), syncedThrough: syncGet.get(market.market_id)?.through ?? null };
   }
 
-  return { start, stop, refresh, backfill, getOverview, getCandles, contract: () => market && { coin: symbol, pair: pair(), quote, marketId: market.market_id, example: false } };
+  return { start, stop, refresh, backfill, getOverview, getCandles, getFullDepth: fullDepth, contract: () => market && { coin: symbol, pair: pair(), quote, marketId: market.market_id, example: false } };
 }

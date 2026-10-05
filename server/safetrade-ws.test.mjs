@@ -8,7 +8,7 @@ test('SafeTrade public stream applies depth deltas by sequence and resynchronize
   const server = createServer();
   const upstream = new WebSocketServer({ server, path: '/api/v2/websocket/public' });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const received = { ticker: [], depth: [], trades: [] };
+  const received = { ticker: [], depth: [], fullDepth: [], trades: [] };
   let snapshotCount = 0;
   let upstreamClient;
   upstream.on('connection', (client) => {
@@ -25,6 +25,7 @@ test('SafeTrade public stream applies depth deltas by sequence and resynchronize
       : { sequence: 9, asks: [['1.7', '4']], bids: [['1.4', '1']] },
     onTicker: (value) => received.ticker.push(value),
     onDepth: (value) => received.depth.push(value),
+    onFullDepth: (value) => received.fullDepth.push(value),
     onTrades: (value) => received.trades.push(...value),
   });
   const until = async (predicate) => {
@@ -39,12 +40,18 @@ test('SafeTrade public stream applies depth deltas by sequence and resynchronize
     await until(() => received.depth.length && received.ticker.length && received.trades.length);
     assert.equal(received.ticker[0].price, 1.57);
     assert.equal(received.trades[0].id, '42');
+    assert.equal(feed.getFullDepth().sequence, 5);
+    assert.equal(received.fullDepth.at(-1).type, 'depth-snapshot');
     upstreamClient.send(JSON.stringify({ 'prlusdt.depth': { sequence: 6, asks: [['1.6', '0'], ['1.65', '5']], bids: [] } }));
     await until(() => received.depth.at(-1)?.asks[0]?.price === 1.65);
     assert.equal(received.depth.at(-1).asks.length, 1);
+    assert.equal(received.fullDepth.at(-1).type, 'depth-delta');
+    assert.equal(feed.getFullDepth().depth.asks[0].price, 1.65);
     upstreamClient.send(JSON.stringify({ 'prlusdt.depth': { sequence: 8, asks: [['1.8', '1']], bids: [] } }));
     await until(() => snapshotCount === 2 && received.depth.at(-1)?.asks[0]?.price === 1.7);
     assert.equal(received.depth.at(-1).bids[0].price, 1.4);
+    assert.equal(received.fullDepth.at(-1).type, 'depth-snapshot');
+    assert.equal(received.fullDepth.at(-1).sequence, 9);
   } finally {
     feed.stop();
     for (const client of upstream.clients) client.terminate();

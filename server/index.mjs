@@ -10,6 +10,7 @@ import { createWprlFeed } from './wprl.mjs';
 import { createHyperliquidFeed } from './hyperliquid.mjs';
 import { createHyperliquidFanout } from './hyperliquid-fanout.mjs';
 import { createLighterFeed } from './lighter.mjs';
+import { createTradeHistory } from './trade-history.mjs';
 
 const HOST = process.env.PEARL_SERVER_HOST || '127.0.0.1';
 const PORT = Number(process.env.PEARL_SERVER_PORT || 8787);
@@ -23,6 +24,7 @@ const keyText = KEY_FILE ? readFileSync(KEY_FILE, 'utf8').trim() : process.env.P
 const DATA_KEY = keyText ? Buffer.from(keyText, 'base64') : null;
 if (!DATA_KEY || DATA_KEY.length !== 32) throw new Error('PEARL_CREDENTIAL_KEY_FILE must contain a base64 32-byte key');
 mkdirSync(DATA_DIR, { recursive: true });
+const tradeHistory = createTradeHistory(resolve(DATA_DIR, 'trade-history.sqlite'));
 const db = new DatabaseSync(resolve(DATA_DIR, 'accounts.sqlite'));
 db.exec('CREATE TABLE IF NOT EXISTS connections (token_hash TEXT PRIMARY KEY, credentials TEXT NOT NULL, created_at INTEGER NOT NULL)');
 const insertConnection = db.prepare('INSERT INTO connections(token_hash, credentials, created_at) VALUES(?, ?, ?)');
@@ -35,6 +37,12 @@ const accountCache = new Map();
 const connectionAttempts = new Map();
 const streamClients = new Set();
 const streamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const fullDepthClients = new Set();
+const fullDepthStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const marketDepthClients = { hyperliquid: new Set(), lighter: new Set() };
+const marketDepthSequence = { hyperliquid: 0, lighter: 0 };
+const marketDepthUpdatedAt = { hyperliquid: 0, lighter: 0 };
+const marketDepthStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 const wprlStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 const wprlStreamClients = new Set();
 const hyperliquidStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
@@ -100,12 +108,35 @@ function updateCandlesFromTrade(trade) {
   }
 }
 
+function broadcastMarketDepth(source, depth, updatedAt) {
+  marketDepthSequence[source]++;
+  marketDepthUpdatedAt[source] = updatedAt;
+  const clients = marketDepthClients[source];
+  if (!clients.size) return;
+  const frame = JSON.stringify({ type: 'depth-snapshot', sequence: marketDepthSequence[source], depth, updatedAt });
+  for (const client of clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (client.bufferedAmount > 256_000) { client.terminate(); continue; }
+    client.send(frame);
+  }
+}
+
 const publicFeed = createSafeTradeFeed({
   apiBase: API_BASE,
-  fetchDepth: () => fetchJson('/trade/public/markets/prlusdt/depth?limit=50'),
+  fetchDepth: () => fetchJson('/trade/public/markets/prlusdt/depth?limit=200'),
   onTicker: (ticker) => updateOverview({ price: ticker.price, stats24h: ticker.stats24h }),
   onDepth: (depth) => updateOverview({ depth }),
+  onFullDepth: (frame) => {
+    if (!fullDepthClients.size) return;
+    const payload = JSON.stringify(frame);
+    for (const client of fullDepthClients) {
+      if (client.readyState !== WebSocket.OPEN) continue;
+      if (client.bufferedAmount > 256_000) { client.terminate(); continue; }
+      client.send(payload);
+    }
+  },
   onTrades: (trades) => {
+    tradeHistory.add('safetrade', 'PRL/USDT', trades);
     const existing = liveOverview?.trades || marketCache.get('overview')?.value?.trades || [];
     const merged = [...trades, ...existing.filter((row) => !trades.some((trade) => trade.id === row.id))]
       .sort((a, b) => b.time - a.time).slice(0, 20);
@@ -133,12 +164,31 @@ const hyperliquidFeed = createHyperliquidFeed({
   coin: process.env.HYPERLIQUID_COIN || 'BTC',
   dex: process.env.HYPERLIQUID_DEX || '',
   quote: process.env.HYPERLIQUID_QUOTE || 'USDC',
-  onFrame: (frame) => hyperliquidFanout.broadcast(frame),
+  onFrame: (frame) => {
+    if (frame.type === 'full-depth') broadcastMarketDepth('hyperliquid', frame.depth, frame.updatedAt);
+    else {
+      if (frame.type === 'trades') tradeHistory.add('hyperliquid', hyperliquidFeed.contract()?.pair ?? 'BTC/USDC', frame.trades);
+      hyperliquidFanout.broadcast(frame);
+    }
+  },
 });
 const lighterFeed = createLighterFeed({
   storePath: resolve(DATA_DIR, 'lighter-market.sqlite'),
-  onFrame: (frame) => lighterFanout.broadcast(frame),
+  onFrame: (frame) => {
+    if (frame.type === 'full-depth') broadcastMarketDepth('lighter', frame.depth, frame.updatedAt);
+    else {
+      if (frame.type === 'trades') tradeHistory.add('lighter', String(lighterFeed.contract()?.marketId ?? 'PRL'), frame.trades);
+      lighterFanout.broadcast(frame);
+    }
+  },
 });
+
+function selectedMarket(source) {
+  if (source === 'safetrade') return 'PRL/USDT';
+  if (source === 'hyperliquid') return hyperliquidFeed.contract()?.pair ?? null;
+  if (source === 'lighter') return lighterFeed.contract()?.marketId == null ? null : String(lighterFeed.contract().marketId);
+  return null;
+}
 
 function json(response, status, body) {
   response.statusCode = status;
@@ -227,6 +277,7 @@ function overviewData() {
       fetchJson('/trade/public/markets/prlusdt/trades?limit=20').then(normalizePublicTrades),
     ]);
     if (results.every((item) => item.status === 'rejected')) throw new Error('Market unavailable');
+    if (results[2].status === 'fulfilled') tradeHistory.add('safetrade', 'PRL/USDT', results[2].value);
     const value = (index, fallback) => results[index].status === 'fulfilled' ? results[index].value : fallback;
     const previous = marketCache.get('overview')?.value;
     const ticker = value(0, null);
@@ -376,6 +427,23 @@ async function handle(request, response) {
     try { return json(response, 200, JSON.parse(readFileSync(process.env.PEARL_UPDATE_FILE || resolve('server/update.json'), 'utf8'))); }
     catch { return json(response, 503, { error: 'Update metadata unavailable' }); }
   }
+  const marketDepthRoute = /^\/api\/(hyperliquid|lighter)\/depth$/.exec(url.pathname);
+  if (request.method === 'GET' && marketDepthRoute) {
+    const source = marketDepthRoute[1];
+    const depth = source === 'hyperliquid' ? hyperliquidFeed.getFullDepth() : lighterFeed.getFullDepth();
+    return depth.asks.length || depth.bids.length
+      ? json(response, 200, { sequence: marketDepthSequence[source], depth, updatedAt: marketDepthUpdatedAt[source] || Date.now() })
+      : json(response, 503, { error: '订单簿正在同步' });
+  }
+  const tradeHistoryRoute = /^\/api\/(safetrade|hyperliquid|lighter)\/trades$/.exec(url.pathname);
+  if (request.method === 'GET' && tradeHistoryRoute) {
+    const source = tradeHistoryRoute[1], market = selectedMarket(source);
+    if (!market) return json(response, 503, { error: '市场正在同步' });
+    try {
+      const data = tradeHistory.query(source, market, Object.fromEntries(url.searchParams));
+      return json(response, 200, { ...data, pair: source === 'lighter' ? lighterFeed.contract().pair : market, source });
+    } catch (error) { return json(response, 400, { error: error.message }); }
+  }
   if (request.method === 'GET' && url.pathname === '/api/wprl/overview') {
     try { return json(response, 200, await wprlFeed.getOverview()); }
     catch { return json(response, 503, { error: 'WPRL 行情暂不可用' }); }
@@ -411,6 +479,10 @@ async function handle(request, response) {
   }
   if (request.method === 'GET' && url.pathname === '/api/lighter/status') {
     return json(response, 200, { ...lighterFanout.stats(), contract: lighterFeed.contract() });
+  }
+  if (request.method === 'GET' && url.pathname === '/api/safetrade/depth') {
+    const snapshot = publicFeed.getFullDepth();
+    return snapshot ? json(response, 200, snapshot) : json(response, 503, { error: '订单簿正在同步' });
   }
   if (request.method === 'GET' && url.pathname === '/api/safetrade') {
     const interval = url.searchParams.get('interval') || '1m';
@@ -496,8 +568,34 @@ server.on('upgrade', (request, socket, head) => {
   let pathname;
   try { pathname = new URL(request.url || '/', `http://${HOST}:${PORT}`).pathname; }
   catch { socket.destroy(); return; }
-  if ((origin && !ALLOWED_ORIGINS.has(origin)) || (pathname !== '/api/safetrade/stream' && pathname !== '/api/safetrade/account-stream' && pathname !== '/api/wprl/stream' && pathname !== '/api/hyperliquid/stream' && pathname !== '/api/lighter/stream')) {
+  if ((origin && !ALLOWED_ORIGINS.has(origin)) || (pathname !== '/api/safetrade/stream' && pathname !== '/api/safetrade/depth-stream' && pathname !== '/api/safetrade/account-stream' && pathname !== '/api/wprl/stream' && pathname !== '/api/hyperliquid/stream' && pathname !== '/api/lighter/stream' && pathname !== '/api/hyperliquid/depth-stream' && pathname !== '/api/lighter/depth-stream')) {
     socket.destroy();
+    return;
+  }
+  if (pathname === '/api/safetrade/depth-stream') {
+    if (fullDepthClients.size >= 100) { socket.destroy(); return; }
+    fullDepthStreamServer.handleUpgrade(request, socket, head, (client) => {
+      fullDepthClients.add(client);
+      client.isAlive = true;
+      client.on('pong', () => { client.isAlive = true; });
+      client.on('close', () => fullDepthClients.delete(client));
+      const snapshot = publicFeed.getFullDepth();
+      if (snapshot) client.send(JSON.stringify({ type: 'depth-snapshot', ...snapshot }));
+    });
+    return;
+  }
+  const marketDepthRoute = /^\/api\/(hyperliquid|lighter)\/depth-stream$/.exec(pathname);
+  if (marketDepthRoute) {
+    const source = marketDepthRoute[1], clients = marketDepthClients[source];
+    if (clients.size >= 100) { socket.destroy(); return; }
+    marketDepthStreamServer.handleUpgrade(request, socket, head, (client) => {
+      clients.add(client);
+      client.isAlive = true;
+      client.on('pong', () => { client.isAlive = true; });
+      client.on('close', () => clients.delete(client));
+      const depth = source === 'hyperliquid' ? hyperliquidFeed.getFullDepth() : lighterFeed.getFullDepth();
+      if (depth.asks.length || depth.bids.length) client.send(JSON.stringify({ type: 'depth-snapshot', sequence: marketDepthSequence[source], depth, updatedAt: marketDepthUpdatedAt[source] || Date.now() }));
+    });
     return;
   }
   if (pathname === '/api/safetrade/account-stream') {
@@ -587,13 +685,15 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 setInterval(() => {
-  const clients = [...streamClients, ...wprlStreamClients, ...hyperliquidFanout.clients, ...lighterFanout.clients, ...[...accountStreams.values()].flatMap((group) => [...group])];
+  const clients = [...streamClients, ...fullDepthClients, ...marketDepthClients.hyperliquid, ...marketDepthClients.lighter, ...wprlStreamClients, ...hyperliquidFanout.clients, ...lighterFanout.clients, ...[...accountStreams.values()].flatMap((group) => [...group])];
   for (const client of clients) {
     if (!client.isAlive) { client.terminate(); continue; }
     client.isAlive = false;
     client.ping();
   }
 }, 25_000).unref();
+
+setInterval(() => { try { tradeHistory.prune(); } catch (error) { console.warn('Trade history prune:', error.message); } }, 10 * 60_000).unref();
 
 server.listen(PORT, HOST, function () {
   console.log(`Pearl SafeTrade server listening on ${HOST}:${this.address().port}`);

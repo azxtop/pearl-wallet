@@ -12,14 +12,14 @@ function orderBook(raw) {
   return { asks: read(raw?.asks), bids: read(raw?.bids) };
 }
 
-function topOfBook(book) {
+function topOfBook(book, limit = 10) {
   const levels = (side, descending) => [...side].filter(([, amount]) => amount > 0)
     .sort((a, b) => descending ? b[0] - a[0] : a[0] - b[0])
-    .slice(0, 10).map(([price, amount]) => ({ price, amount }));
+    .slice(0, limit).map(([price, amount]) => ({ price, amount }));
   return { asks: levels(book.asks, false), bids: levels(book.bids, true) };
 }
 
-export function createSafeTradeFeed({ apiBase, fetchDepth, onTicker, onDepth, onTrades, onStatus = () => {}, WebSocketClass = WebSocket }) {
+export function createSafeTradeFeed({ apiBase, fetchDepth, onTicker, onDepth, onTrades, onFullDepth = () => {}, onStatus = () => {}, WebSocketClass = WebSocket }) {
   const endpoint = `${apiBase.replace(/^http/, 'ws').replace(/\/$/, '')}/websocket/public`;
   let socket;
   let running = false;
@@ -49,6 +49,7 @@ export function createSafeTradeFeed({ apiBase, fetchDepth, onTicker, onDepth, on
     }
     sequence = next;
     onDepth(topOfBook(book));
+    onFullDepth({ type: 'depth-delta', sequence, asks: raw.asks ?? [], bids: raw.bids ?? [] });
     return true;
   }
 
@@ -71,6 +72,7 @@ export function createSafeTradeFeed({ apiBase, fetchDepth, onTicker, onDepth, on
         if (!applyDepth(delta)) { gap = true; break; }
       }
       onDepth(topOfBook(book));
+      if (!gap) onFullDepth({ type: 'depth-snapshot', sequence, depth: topOfBook(book, 200) });
       if (gap) { book = undefined; retry = true; }
     } catch {
       book = undefined;
@@ -142,6 +144,7 @@ export function createSafeTradeFeed({ apiBase, fetchDepth, onTicker, onDepth, on
   }
 
   return {
+    getFullDepth() { return book ? { sequence, depth: topOfBook(book, 200), updatedAt: Date.now() } : null; },
     start() { if (!running) { running = true; connect(); } },
     stop() { running = false; clearTimeout(retryTimer); clearInterval(heartbeat); socket?.close(); },
   };

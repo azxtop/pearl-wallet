@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Market now includes read-only Lighter PRL/USDC perpetual data: 1-minute and longer candlesticks, live order book, recent trades, mark and index prices, open interest, and funding rate. The server records Lighter candlesticks and the app displays zero-volume placeholders for recent minutes without trades.\n\nSHA-256: ${hash}`,
+      body: `Market now has a full order book for SafeTrade, Hyperliquid, and Lighter, plus server-recorded trade history with time, side, price, and minimum-amount filters and paginated results. Hyperliquid BTC depth is limited to the 20 levels per side supplied by its upstream API.\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);

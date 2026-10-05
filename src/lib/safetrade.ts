@@ -28,6 +28,9 @@ const API_URL = import.meta.env.VITE_SAFETRADE_API_URL || 'https://pearlwallet.a
 const WPRL_API_URL = import.meta.env.VITE_WPRL_API_URL || 'https://pearlwallet.az1993.xyz/api/wprl';
 const HYPERLIQUID_API_URL = import.meta.env.VITE_HYPERLIQUID_API_URL || 'https://pearlwallet.az1993.xyz/api/hyperliquid';
 const LIGHTER_API_URL = import.meta.env.VITE_LIGHTER_API_URL || 'https://pearlwallet.az1993.xyz/api/lighter';
+export type TradeSource = 'safetrade' | 'hyperliquid' | 'lighter';
+export type TradeHistoryPage = { source: TradeSource; pair: string; trades: MarketData['trades']; nextCursor: string | null; recordingSince: number | null };
+const sourceUrl = (source: TradeSource) => source === 'hyperliquid' ? HYPERLIQUID_API_URL : source === 'lighter' ? LIGHTER_API_URL : API_URL;
 const TOKEN_KEY = 'pearl-safetrade-connection-v1';
 
 export const savedConnectionToken = () => localStorage.getItem(TOKEN_KEY) || '';
@@ -53,6 +56,9 @@ export const loadMarket = (interval: string) => request<MarketData>(`${API_URL}?
 export const loadMarketOverview = () => request<MarketOverview>(`${API_URL}/overview`);
 export const loadMarketCandles = (interval: string) => request<CandleSeries>(`${API_URL}/candles?interval=${encodeURIComponent(interval)}`);
 export const openMarketStream = () => new WebSocket(`${API_URL.replace(/^http/, 'ws')}/stream`);
+export const loadFullDepth = (source: TradeSource = 'safetrade') => request<import('./full-depth').DepthSnapshot>(`${sourceUrl(source)}/depth`);
+export const openFullDepthStream = (source: TradeSource = 'safetrade') => new WebSocket(`${sourceUrl(source).replace(/^http/, 'ws')}/depth-stream`);
+export const loadTradeHistory = (source: TradeSource, filters: Record<string, string>) => request<TradeHistoryPage>(`${sourceUrl(source)}/trades?${new URLSearchParams(filters)}`);
 export const loadWprlOverview = () => request<MarketOverview>(`${WPRL_API_URL}/overview`);
 export const loadWprlCandles = (interval: string) => request<CandleSeries>(`${WPRL_API_URL}/candles?interval=${encodeURIComponent(interval)}`);
 export const openWprlStream = () => new WebSocket(`${WPRL_API_URL.replace(/^http/, 'ws')}/stream`);

@@ -103,6 +103,7 @@ export function createHyperliquidFeed({ storePath, coin = 'BTC', dex = '', quote
     const parse = (side) => side.slice(0, 20).map((item) => ({ price: number(item.px), amount: number(item.sz) })).filter((item) => Number.isFinite(item.price) && Number.isFinite(item.amount));
     depth = { bids: parse(levels[0]), asks: parse(levels[1]) };
     if (overview) { overview = { ...overview, depth, updatedAt: now() }; send({ type: 'overview-patch', data: { depth, updatedAt: overview.updatedAt } }); }
+    send({ type: 'full-depth', depth, updatedAt: now() });
   }
 
   function updateTrades(data) {
@@ -188,5 +189,5 @@ export function createHyperliquidFeed({ storePath, coin = 'BTC', dex = '', quote
     return { pair: pair(), interval, candles, updatedAt: now(), source: 'recorded', recordingSince: recordingSince(), syncedThrough: latest.get(coin, '1m')?.time ?? null };
   }
 
-  return { start, stop, getOverview, getCandles, backfill, contract: () => contract };
+  return { start, stop, getOverview, getCandles, getFullDepth: () => depth, backfill, contract: () => contract };
 }
