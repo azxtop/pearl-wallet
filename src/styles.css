@@ -192,13 +192,13 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .book-labels span:not(:first-child), .book-row span:not(:first-child), .trade-row span:not(:first-child) { text-align: right; }
 .book-row, .trade-row { min-height: 29px; padding: 5px 0; }
 .book-row { background: linear-gradient(to left, var(--book-color) var(--book-fill), transparent var(--book-fill)); }
-.book-row.ask { --book-color: #d3516317; }.book-row.bid { --book-color: #1b9b6417; }
+.book-row.ask { --book-color: var(--trade-red-fill); }.book-row.bid { --book-color: var(--trade-green-fill); }
 .book-row.ask span:first-child { color: #cb5262; }.book-row.bid span:first-child { color: #168a5e; }
 .book-spread { text-align: center; color: #9aa3ae; font-size: 11px; padding: 11px 0; border-block: 1px solid #eceff2; margin: 5px 0; }
 .trade-row { position: relative; isolation: isolate; }
 .trade-row > span { position: relative; z-index: 1; }
 .trade-volume-bar { position: absolute; inset: 0 auto 0 0; z-index: 0; pointer-events: none; }
-.trade-volume-bar.buy { background: #5eba8940; }.trade-volume-bar.sell { background: #e2546040; }
+.trade-volume-bar.buy { background: var(--trade-green-fill); }.trade-volume-bar.sell { background: var(--trade-red-fill); }
 .trade-amount { min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .market-empty { text-align: center; padding: 35px 0; color: #8995a4; font-size: 13px; }
 .safetrade-connect { background: #fff; border: 1px solid #e1e5eb; border-radius: 15px; padding: 18px; }
@@ -234,7 +234,7 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .app input, .app textarea, .app .secret-phrase { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 .app.trade-active, .trade-active .content, .trade-page { background: #fff; }
 .trade-active .content { padding-left: 0; padding-right: 0; }
-.trade-page { --trade-green: #5eba89; --trade-red: #e25460; --trade-muted: #92979c; color: #171c1a; padding-bottom: 30px; }
+.trade-page { --trade-green: #5eba89; --trade-red: #e25460; --trade-green-fill: #5eba8933; --trade-red-fill: #e2546033; --trade-muted: #92979c; color: #171c1a; padding-bottom: 30px; }
 .trade-page .pair-head, .trade-page .market-summary, .trade-page .intervals, .trade-page .market-tabs, .trade-page .book, .trade-page .recent-trades, .trade-page .exchange-assets-head, .trade-page .exchange-balances, .trade-page .safetrade-connect, .trade-page > .inline-error { margin-left: 18px; margin-right: 18px; }
 .market-source-switch { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin: 14px 18px 5px; padding: 4px; background: #f3f5f4; border-radius: 11px; }
 .market-source-switch button { min-width: 0; border: 0; border-radius: 8px; background: transparent; padding: 9px 7px; text-align: center; color: #828b89; }
@@ -373,8 +373,6 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .book-side-head { color: var(--trade-muted); font-size: 11px; height: 29px; }
 .book-side-head span:last-child { text-align: right; }
 .book-row { min-height: 31px; padding: 5px 2px; font-size: 11.5px; white-space: nowrap; overflow: hidden; background: linear-gradient(to left, var(--book-color) var(--book-fill), transparent var(--book-fill)); }
-.book-row.bid { --book-color: #5eba891f; }
-.book-row.ask { --book-color: #e254601f; }
 .book-row .book-price { font-weight: 600; }
 .book-row .book-amount { color: #303737; }
 .book-row span:last-child { text-align: right; }
