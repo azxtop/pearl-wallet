@@ -28,9 +28,10 @@ const API_URL = import.meta.env.VITE_SAFETRADE_API_URL || 'https://pearlwallet.a
 const WPRL_API_URL = import.meta.env.VITE_WPRL_API_URL || 'https://pearlwallet.az1993.xyz/api/wprl';
 const HYPERLIQUID_API_URL = import.meta.env.VITE_HYPERLIQUID_API_URL || 'https://pearlwallet.az1993.xyz/api/hyperliquid';
 const LIGHTER_API_URL = import.meta.env.VITE_LIGHTER_API_URL || 'https://pearlwallet.az1993.xyz/api/lighter';
-export type TradeSource = 'safetrade' | 'hyperliquid' | 'lighter';
+const ASTER_API_URL = import.meta.env.VITE_ASTER_API_URL || 'https://pearlwallet.az1993.xyz/api/aster';
+export type TradeSource = 'safetrade' | 'hyperliquid' | 'lighter' | 'aster';
 export type TradeHistoryPage = { source: TradeSource; pair: string; trades: MarketData['trades']; nextCursor: string | null; recordingSince: number | null };
-const sourceUrl = (source: TradeSource) => source === 'hyperliquid' ? HYPERLIQUID_API_URL : source === 'lighter' ? LIGHTER_API_URL : API_URL;
+const sourceUrl = (source: TradeSource) => source === 'hyperliquid' ? HYPERLIQUID_API_URL : source === 'lighter' ? LIGHTER_API_URL : source === 'aster' ? ASTER_API_URL : API_URL;
 const TOKEN_KEY = 'pearl-safetrade-connection-v1';
 
 export const savedConnectionToken = () => localStorage.getItem(TOKEN_KEY) || '';
@@ -68,6 +69,9 @@ export const openHyperliquidStream = () => new WebSocket(`${HYPERLIQUID_API_URL.
 export const loadLighterOverview = () => request<MarketOverview>(`${LIGHTER_API_URL}/overview`);
 export const loadLighterCandles = (interval: string) => request<CandleSeries>(`${LIGHTER_API_URL}/candles?interval=${encodeURIComponent(interval)}`);
 export const openLighterStream = () => new WebSocket(`${LIGHTER_API_URL.replace(/^http/, 'ws')}/stream`);
+export const loadAsterOverview = () => request<MarketOverview>(`${ASTER_API_URL}/overview`);
+export const loadAsterCandles = (interval: string) => request<CandleSeries>(`${ASTER_API_URL}/candles?interval=${encodeURIComponent(interval)}`);
+export const openAsterStream = () => new WebSocket(`${ASTER_API_URL.replace(/^http/, 'ws')}/stream`);
 export const connectAccount = (key: string, secret: string) => request<{ token: string }>(`${API_URL}/connection`, 'POST', { key, secret });
 export const loadAccount = (token: string) => request<AccountData>(`${API_URL}/account`, 'GET', undefined, token);
 export const accountStreamTicket = (token: string) => request<{ ticket: string }>(`${API_URL}/account-stream-ticket`, 'POST', undefined, token);

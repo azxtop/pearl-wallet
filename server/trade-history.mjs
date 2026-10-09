@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 
-const SOURCES = new Set(['safetrade', 'hyperliquid', 'lighter']);
+const SOURCES = new Set(['safetrade', 'hyperliquid', 'lighter', 'aster']);
 
 export function createTradeHistory(path, { now = Date.now } = {}) {
   const db = new DatabaseSync(path);

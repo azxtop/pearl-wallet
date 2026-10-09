@@ -16,15 +16,16 @@ import { maxSpendable, prepareSend, SEND_FEE_RATES, type SendFeeTier, type SendP
 import { estimatedSpotAssetsUSDT, totalAssetBalance } from "./lib/asset-balance";
 import type { EncryptedWallet } from "./lib/keystore";
 import { BIOMETRIC_ADDRESS_KEY, loadProfiles, profileName, saveProfiles, type ProfileStore, type WalletProfile } from "./lib/profiles";
-import { accountStreamTicket, clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadMarketCandles, loadMarketOverview, loadFullDepth, loadTradeHistory, openFullDepthStream, loadWprlCandles, loadWprlOverview, loadHyperliquidCandles, loadHyperliquidOverview, loadLighterCandles, loadLighterOverview, openAccountStream, openMarketStream, openWprlStream, openHyperliquidStream, openLighterStream, savedConnectionToken, saveConnectionToken, type AccountData, type MarketData, type MarketStreamFrame, type TradeSource, type TradeHistoryPage as TradeHistoryResult } from "./lib/safetrade";
+import { profileAddressChoices, loadSavedAddresses, saveSavedAddresses, type SavedAddress } from "./lib/address-book";
+import { accountStreamTicket, clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadMarketCandles, loadMarketOverview, loadFullDepth, loadTradeHistory, openFullDepthStream, loadWprlCandles, loadWprlOverview, loadHyperliquidCandles, loadHyperliquidOverview, loadLighterCandles, loadLighterOverview, loadAsterCandles, loadAsterOverview, openAccountStream, openMarketStream, openWprlStream, openHyperliquidStream, openLighterStream, openAsterStream, savedConnectionToken, saveConnectionToken, type AccountData, type MarketData, type MarketStreamFrame, type TradeSource, type TradeHistoryPage as TradeHistoryResult } from "./lib/safetrade";
 import { aggregateDepth, applyDepthDelta, type DepthDelta, type DepthSnapshot } from "./lib/full-depth";
 import { chartWindow } from "./lib/chart-window";
 import { displayLighterCandles } from "./lib/chart-candles";
-import { loadPublicMarketCache, loadWprlMarketCache, loadHyperliquidMarketCache, loadLighterMarketCache, MARKET_INTERVALS, savePublicMarketCache, saveWprlMarketCache, saveHyperliquidMarketCache, saveLighterMarketCache, type MarketInterval } from "./lib/market-cache";
+import { loadPublicMarketCache, loadWprlMarketCache, loadHyperliquidMarketCache, loadLighterMarketCache, loadAsterMarketCache, MARKET_INTERVALS, savePublicMarketCache, saveWprlMarketCache, saveHyperliquidMarketCache, saveLighterMarketCache, saveAsterMarketCache, type MarketInterval } from "./lib/market-cache";
 import { screenPrivacy } from "./lib/screen-privacy";
 
 type Tab = "wallet" | "market" | "setting";
-type MarketSource = "safetrade" | "wprl" | "hyperliquid" | "lighter";
+type MarketSource = "safetrade" | "wprl" | "hyperliquid" | "lighter" | "aster";
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
 const APP_VERSION = "0.2.30";
@@ -409,7 +410,7 @@ export default function App() {
     return localStorage.getItem(UNLOCK_KEY) === "false" && active?.kind === "wallet" && active.addresses.length ? active.addresses : null;
   });
   const [tab, setTab] = useState<Tab>("wallet");
-  const [marketSource, setMarketSource] = useState<MarketSource>(() => { const source = localStorage.getItem("pearl-market-source-v1"); return source === "wprl" || source === "hyperliquid" || source === "lighter" ? source : "safetrade"; });
+  const [marketSource, setMarketSource] = useState<MarketSource>(() => { const source = localStorage.getItem("pearl-market-source-v1"); return source === "wprl" || source === "hyperliquid" || source === "lighter" || source === "aster" ? source : "safetrade"; });
   const [walletPage, setWalletPage] = useState<WalletPage>("home");
   const [snapshotCache, setSnapshotCache] = useState<SnapshotCache>(loadSnapshotCache);
   const [pendingOutgoing, setPendingOutgoing] = useState(loadPendingOutgoing);
@@ -445,6 +446,12 @@ export default function App() {
   const lighterOverviewRequest = useRef<Promise<void> | null>(null);
   const lighterCandleRequests = useRef(new Map<Interval, Promise<void>>());
   const lighterSocket = useRef<WebSocket | null>(null);
+  const [asterMarket, setAsterMarket] = useState(loadAsterMarketCache);
+  const [asterError, setAsterError] = useState("");
+  const [asterRefreshing, setAsterRefreshing] = useState(false);
+  const asterOverviewRequest = useRef<Promise<void> | null>(null);
+  const asterCandleRequests = useRef(new Map<Interval, Promise<void>>());
+  const asterSocket = useRef<WebSocket | null>(null);
   const [overviewError, setOverviewError] = useState("");
   const [candleError, setCandleError] = useState("");
   const [marketRefreshing, setMarketRefreshing] = useState(false);
@@ -498,20 +505,33 @@ export default function App() {
     depth: lighterOverview?.depth ?? { asks: [], bids: [] }, trades: lighterOverview?.trades ?? [],
     marketError: lighterOverview?.marketError ?? null, updatedAt: Math.max(lighterOverview?.updatedAt ?? 0, lighterSeries?.updatedAt ?? 0),
   } : null;
+  const asterSeries = asterMarket.series[interval];
+  const asterOverview = asterMarket.overview;
+  const asterExchange: MarketData | null = asterOverview || asterSeries ? {
+    pair: "PEARL/USDT", price: asterOverview?.price ?? asterSeries?.candles.at(-1)?.close ?? null,
+    stats24h: asterOverview?.stats24h ?? null, candles: asterSeries?.candles ?? [],
+    depth: asterOverview?.depth ?? { asks: [], bids: [] }, trades: asterOverview?.trades ?? [],
+    marketError: asterOverview?.marketError ?? null, updatedAt: Math.max(asterOverview?.updatedAt ?? 0, asterSeries?.updatedAt ?? 0),
+  } : null;
   const isWprl = marketSource === "wprl";
   const isHyperliquid = marketSource === "hyperliquid";
   const isLighter = marketSource === "lighter";
-  const activeSeries = isLighter ? lighterSeries : isHyperliquid ? hyperliquidSeries : isWprl ? wprlSeries : currentSeries;
-  const activeExchange = isLighter ? lighterExchange : isHyperliquid ? hyperliquidExchange : isWprl ? wprlExchange : exchange;
+  const isAster = marketSource === "aster";
+  const activeSeries = isAster ? asterSeries : isLighter ? lighterSeries : isHyperliquid ? hyperliquidSeries : isWprl ? wprlSeries : currentSeries;
+  const activeExchange = isAster ? asterExchange : isLighter ? lighterExchange : isHyperliquid ? hyperliquidExchange : isWprl ? wprlExchange : exchange;
   const activeCandles = isLighter && lighterOverview && Date.now() - lighterOverview.updatedAt < 90_000
     ? displayLighterCandles(activeSeries?.candles ?? [], interval, lighterChartClock)
     : activeSeries?.candles ?? [];
-  const activeMarketError = isLighter ? lighterError : isHyperliquid ? hyperliquidError : isWprl ? wprlError : exchangeError;
+  const activeMarketError = isAster ? asterError : isLighter ? lighterError : isHyperliquid ? hyperliquidError : isWprl ? wprlError : exchangeError;
   const hyperliquidCoin = hyperliquidOverview?.contract?.coin ?? "BTC";
-  const activeSymbol = isLighter ? "PRL" : isHyperliquid ? hyperliquidCoin : isWprl ? "WPRL" : "PRL";
+  const activeSymbol = isAster ? "PEARL" : isLighter ? "PRL" : isHyperliquid ? hyperliquidCoin : isWprl ? "WPRL" : "PRL";
   const activeQuote = isLighter ? "USDC" : isHyperliquid ? hyperliquidOverview?.contract?.quote ?? "USDC" : "USDT";
-  const isPerp = isHyperliquid || isLighter;
-  const perpOverview = isLighter ? lighterOverview : hyperliquidOverview;
+  const isPerp = isHyperliquid || isLighter || isAster;
+  const perpOverview = isAster ? asterOverview : isLighter ? lighterOverview : hyperliquidOverview;
+  const perpTradeSample = isAster ? 0 : isLighter ? lighterTradeSample : hyperliquidTradeSample;
+  const perpRecordingSince = isAster ? asterSeries?.recordingSince : isLighter ? lighterSeries?.recordingSince : hyperliquidSeries?.recordingSince;
+  const [sourcePickerOpen, setSourcePickerOpen] = useState(false);
+  const [sourceCategory, setSourceCategory] = useState<"all" | "spot" | "perp" | "chain">("all");
   const [marketDetails, setMarketDetails] = useState<"depth" | "trades">("depth");
   const [fullBookOpen, setFullBookOpen] = useState(false);
   const [tradeHistoryOpen, setTradeHistoryOpen] = useState(false);
@@ -546,6 +566,15 @@ export default function App() {
   const [backupCheck, setBackupCheck] = useState("");
   const [receiveQr, setReceiveQr] = useState("");
   const [sendAddress, setSendAddress] = useState("");
+  const [addressBookOpen, setAddressBookOpen] = useState(false);
+  const [addressBookPurpose, setAddressBookPurpose] = useState<"send" | "manage">("send");
+  const [expandedAddressWallets, setExpandedAddressWallets] = useState<Set<string>>(() => new Set());
+  const [savedAddresses, setSavedAddresses] = useState(loadSavedAddresses);
+  const [editingAddress, setEditingAddress] = useState<string | null>(null);
+  const [addingAddress, setAddingAddress] = useState(false);
+  const [entryAddress, setEntryAddress] = useState("");
+  const [entryNote, setEntryNote] = useState("");
+  const [addressBookError, setAddressBookError] = useState("");
   const [sendAmount, setSendAmount] = useState("");
   const [sendFeeTier, setSendFeeTier] = useState<SendFeeTier>("standard");
   const [preview, setPreview] = useState<SendPreview | null>(null);
@@ -642,6 +671,7 @@ export default function App() {
   useEffect(() => { saveWprlMarketCache(wprlMarket); }, [wprlMarket]);
   useEffect(() => { saveHyperliquidMarketCache(hyperliquidMarket); }, [hyperliquidMarket]);
   useEffect(() => { saveLighterMarketCache(lighterMarket); }, [lighterMarket]);
+  useEffect(() => { saveAsterMarketCache(asterMarket); }, [asterMarket]);
   useEffect(() => {
     if (tab !== "market" || marketSource !== "lighter") return;
     let timer: ReturnType<typeof setTimeout>;
@@ -752,6 +782,39 @@ export default function App() {
         if (target === activeInterval.current) setLighterRefreshing(false);
       });
     lighterCandleRequests.current.set(target, pending);
+    return pending;
+  }, []);
+
+  const refreshAsterOverview = useCallback(() => {
+    if (asterOverviewRequest.current) return asterOverviewRequest.current;
+    const pending = loadAsterOverview().then((data) => {
+      setAsterMarket((previous) => !previous.overview || data.updatedAt > previous.overview.updatedAt
+        ? { ...previous, overview: data, series: previous.overview?.pair && previous.overview.pair !== data.pair ? {} : previous.series } : previous);
+      setAsterError("");
+    }).catch(() => setAsterError("Aster 行情暂不可用"))
+      .finally(() => { asterOverviewRequest.current = null; });
+    asterOverviewRequest.current = pending;
+    return pending;
+  }, []);
+
+  const refreshAsterCandles = useCallback((target: Interval, visible = true) => {
+    const existing = asterCandleRequests.current.get(target);
+    if (existing) return existing;
+    if (visible && target === activeInterval.current) setAsterRefreshing(true);
+    const pending = loadAsterCandles(target).then((series) => {
+      if (series.interval !== target) throw new Error("K 线周期不匹配");
+      setAsterMarket((previous) => {
+        const current = previous.series[target];
+        return !current || series.updatedAt > current.updatedAt || (series.candles.at(-1)?.time ?? 0) > (current.candles.at(-1)?.time ?? 0)
+          ? { ...previous, series: { ...previous.series, [target]: series } } : previous;
+      });
+      setAsterError("");
+    }).catch(() => setAsterError("Aster K 线暂不可用"))
+      .finally(() => {
+        asterCandleRequests.current.delete(target);
+        if (target === activeInterval.current) setAsterRefreshing(false);
+      });
+    asterCandleRequests.current.set(target, pending);
     return pending;
   }, []);
 
@@ -1299,6 +1362,84 @@ export default function App() {
   }, [tab, marketSource, interval, refreshLighterCandles]);
 
   useEffect(() => {
+    if (tab !== "market" || marketSource !== "aster") return;
+    let socket: WebSocket | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+    let retry = 1000;
+    const close = () => {
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = null;
+      socket?.close(); socket = null; asterSocket.current = null;
+    };
+    const connect = () => {
+      if (stopped || document.hidden || socket) return;
+      const current = openAsterStream();
+      socket = current;
+      current.onopen = () => {
+        if (socket !== current) return;
+        asterSocket.current = current;
+        current.send(JSON.stringify({ type: "subscribe", interval: activeInterval.current }));
+        retry = 1000;
+        void refreshAsterOverview();
+        void refreshAsterCandles(activeInterval.current, false);
+      };
+      current.onmessage = ({ data }) => {
+        let frame: MarketStreamFrame;
+        try { frame = JSON.parse(String(data)) as MarketStreamFrame; } catch { return; }
+        if (frame.type === "overview" && Number.isFinite(frame.data?.updatedAt)) {
+          setAsterMarket((previous) => !previous.overview || frame.data.updatedAt >= previous.overview.updatedAt
+            ? { ...previous, overview: frame.data, series: previous.overview?.pair && previous.overview.pair !== frame.data.pair ? {} : previous.series } : previous);
+          setAsterError("");
+        } else if (frame.type === "overview-patch" && Number.isFinite(frame.data?.updatedAt)) {
+          setAsterMarket((previous) => previous.overview && frame.data.updatedAt >= previous.overview.updatedAt
+            ? { ...previous, overview: { ...previous.overview, ...frame.data } } : previous);
+        } else if (frame.type === "trades" && Array.isArray(frame.trades)) {
+          setAsterMarket((previous) => {
+            if (!previous.overview) return previous;
+            const ids = new Set(frame.trades.map((trade) => trade.id));
+            const trades = [...frame.trades, ...previous.overview.trades.filter((trade) => !ids.has(trade.id))].sort((a, b) => b.time - a.time).slice(0, 20);
+            return { ...previous, overview: { ...previous.overview, trades, price: frame.price ?? previous.overview.price, updatedAt: frame.updatedAt } };
+          });
+        } else if (frame.type === "candle" && MARKET_INTERVALS.includes(frame.interval as Interval) && Number.isFinite(frame.candle?.time)) {
+          const target = frame.interval as Interval;
+          setAsterMarket((previous) => {
+            const series = previous.series[target];
+            if (!series?.candles.length) return previous;
+            const candles = series.candles.slice();
+            const last = candles.at(-1)!;
+            if (frame.candle.time < last.time) return previous;
+            if (frame.candle.time === last.time) candles[candles.length - 1] = frame.candle;
+            else { candles.push(frame.candle); if (candles.length > 300) candles.shift(); }
+            return { ...previous, series: { ...previous.series, [target]: { ...series, candles, updatedAt: frame.updatedAt } } };
+          });
+        }
+      };
+      current.onerror = () => current.close();
+      current.onclose = () => {
+        if (socket !== current) return;
+        socket = null; asterSocket.current = null;
+        if (stopped || document.hidden) return;
+        retryTimer = setTimeout(connect, retry);
+        retry = Math.min(retry * 2, 30_000);
+      };
+    };
+    const onVisibility = () => { if (document.hidden) close(); else { void refreshAsterOverview(); void refreshAsterCandles(activeInterval.current, false); connect(); } };
+    void refreshAsterOverview(); void refreshAsterCandles(activeInterval.current); connect();
+    const overviewTimer = setInterval(() => { if (!document.hidden) void refreshAsterOverview(); }, 30_000);
+    const candleTimer = setInterval(() => { if (!document.hidden) void refreshAsterCandles(activeInterval.current, false); }, 60_000);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { stopped = true; close(); clearInterval(overviewTimer); clearInterval(candleTimer); document.removeEventListener("visibilitychange", onVisibility); };
+  }, [tab, marketSource, refreshAsterOverview, refreshAsterCandles]);
+
+  useEffect(() => {
+    if (tab !== "market" || marketSource !== "aster") return;
+    const socket = asterSocket.current;
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "subscribe", interval }));
+    void refreshAsterCandles(interval);
+  }, [tab, marketSource, interval, refreshAsterCandles]);
+
+  useEffect(() => {
     if (tab !== "market" || marketSource !== "safetrade" || !connectionToken) return;
     let socket: WebSocket | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
@@ -1382,6 +1523,8 @@ export default function App() {
     if (!Capacitor.isNativePlatform()) return;
     let removed = false;
     const listener = NativeApp.addListener("backButton", () => {
+      if (addressBookOpen) { setAddressBookOpen(false); return; }
+      if (sourcePickerOpen) { setSourcePickerOpen(false); return; }
       if (tab === "market" && (fullBookOpen || tradeHistoryOpen)) { closeMarketDetail(); return; }
       if (profileMenuOpen) { setProfileMenuOpen(false); setRenamingProfile(false); setConfirmRemoveWatch(false); return; }
       if (addingProfile) { setAddingProfile(false); setPassword(""); setInputMnemonic(""); return; }
@@ -1395,7 +1538,7 @@ export default function App() {
     });
     if (removed) listener.then((handle) => handle.remove());
     return () => { removed = true; listener.then((handle) => handle.remove()); };
-  }, [tab, walletPage, profileMenuOpen, addingProfile, preview, fullBookOpen, tradeHistoryOpen]);
+  }, [tab, walletPage, profileMenuOpen, addingProfile, preview, fullBookOpen, tradeHistoryOpen, addressBookOpen, sourcePickerOpen]);
 
   useEffect(() => {
     if (!notice) return;
@@ -1706,6 +1849,61 @@ export default function App() {
     setSendAmount(formatPrl(sendMax * BigInt(percent) / 100n));
   }
 
+  function openAddressBook(purpose: "send" | "manage") {
+    setAddressBookPurpose(purpose);
+    setExpandedAddressWallets(new Set());
+    setAddingAddress(false);
+    setEditingAddress(null);
+    setAddressBookError("");
+    setAddressBookOpen(true);
+  }
+
+  function saveAddressEntry(event: FormEvent) {
+    event.preventDefault();
+    const address = entryAddress.trim();
+    const note = entryNote.trim();
+    if (!isValidPearlAddress(address)) { setAddressBookError("请输入有效的 Pearl 主网地址"); return; }
+    if (!note || note.length > 50) { setAddressBookError("备注需为 1–50 个字符"); return; }
+    const ownAddress = profileAddressChoices(profileStore.profiles).some((entry) => entry.address === address);
+    if (ownAddress) { setAddressBookError("此地址已在本机钱包或观察地址中"); return; }
+    if (savedAddresses.some((entry) => entry.address === address && entry.address !== editingAddress)) { setAddressBookError("此地址已在地址簿中"); return; }
+    if (!editingAddress && savedAddresses.length >= 100) { setAddressBookError("地址簿最多保存 100 个地址"); return; }
+    const next = [...savedAddresses.filter((entry) => entry.address !== editingAddress), { address, note }];
+    try { saveSavedAddresses(next); }
+    catch { setAddressBookError("本机储存失败，地址未保存"); return; }
+    setSavedAddresses(next);
+    setEditingAddress(null); setAddingAddress(false); setEntryAddress(""); setEntryNote(""); setAddressBookError("");
+    setNotice("地址已保存到本机");
+  }
+
+  function chooseBookAddress(address: string) {
+    if (addressBookPurpose === "manage") { void copy(address); return; }
+    setSendAddress(address);
+    setAddressBookOpen(false);
+  }
+
+  function deleteSavedAddress(address: string) {
+    const next = savedAddresses.filter((entry) => entry.address !== address);
+    try { saveSavedAddresses(next); }
+    catch { setAddressBookError("本机储存失败，地址未删除"); return; }
+    setSavedAddresses(next);
+    setAddressBookError("");
+  }
+
+  function addressBookRow(entry: SavedAddress & { kind?: "wallet" | "watch" | "saved" }) {
+    return <div className="address-row" key={`${entry.kind}:${entry.address}`}><button type="button" className="address-choice" onClick={() => chooseBookAddress(entry.address)}><strong>{entry.note || "未命名地址"}</strong><small>{entry.address}</small></button>{entry.kind === "saved" && <div className="address-actions"><button type="button" onClick={() => { setEditingAddress(entry.address); setAddingAddress(true); setEntryAddress(entry.address); setEntryNote(entry.note); setAddressBookError(""); }}>编辑</button><button type="button" onClick={() => deleteSavedAddress(entry.address)}>删除</button></div>}</div>;
+  }
+
+  const sourceOptions: { id: MarketSource; pair: string; venue: string; category: "spot" | "perp" | "chain"; market: MarketData | null }[] = [
+    { id: "safetrade", pair: "PRL/USDT", venue: "SafeTrade · 现货", category: "spot", market: exchange },
+    { id: "wprl", pair: "WPRL/USDT", venue: "Uniswap · 链上", category: "chain", market: wprlExchange },
+    { id: "hyperliquid", pair: `${hyperliquidCoin}/${hyperliquidOverview?.contract?.quote ?? "USDC"}`, venue: `Hyperliquid · ${hyperliquidOverview?.contract?.example === false ? "永续" : "BTC 示例"}`, category: "perp", market: hyperliquidExchange },
+    { id: "lighter", pair: "PRL/USDC", venue: "Lighter · 永续", category: "perp", market: lighterExchange },
+    { id: "aster", pair: "PEARL/USDT", venue: "Aster · Pearl 永续", category: "perp", market: asterExchange },
+  ];
+  const visibleSources = sourceOptions.filter((option) => sourceCategory === "all" || option.category === sourceCategory);
+  const localAddressChoices = profileAddressChoices(profileStore.profiles);
+
   function profilePicker() {
     return <div className="profile-picker">
       <button className="profile-trigger" onClick={() => { setProfileMenuOpen(!profileMenuOpen); setRenamingProfile(false); setConfirmRemoveWatch(false); }} aria-expanded={profileMenuOpen} aria-label="切换钱包">
@@ -1795,7 +1993,7 @@ export default function App() {
           <label className="send-field"><span>转账金额</span><div className="send-amount-input"><input value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} inputMode="decimal" placeholder="0.00" autoComplete="off" aria-label="转账金额" /><strong>PRL</strong></div></label>
           <p className="send-spendable">最多可发送 {snapshotFresh && !snapshot?.partial ? formatPrl(sendMax) : "—"} PRL</p>
           <div className="send-percent-buttons">{[25, 50, 75, 100].map((percent) => <button key={percent} type="button" disabled={sendMax <= 0n} onClick={() => chooseSendPercent(percent)}>{percent === 100 ? "MAX" : `${percent}%`}</button>)}</div>
-          <label className="send-field"><span>收款地址</span><input value={sendAddress} onChange={(event) => setSendAddress(event.target.value)} placeholder="输入 prl1… 收款地址" autoComplete="off" spellCheck={false} aria-label="收款地址" /></label>
+          <div className="send-field"><div className="send-address-heading"><span>收款地址</span><button type="button" onClick={() => openAddressBook("send")}>地址簿 ›</button></div><input value={sendAddress} onChange={(event) => setSendAddress(event.target.value)} placeholder="输入 prl1… 收款地址" autoComplete="off" spellCheck={false} aria-label="收款地址" /></div>
           <div className="send-fee-section"><span className="send-fee-title">交易手续费</span><div className="send-fee-card"><div className="send-fee-options">{(["priority", "standard", "economy"] as const).map((tier) => <button key={tier} type="button" className={sendFeeTier === tier ? "selected" : ""} aria-pressed={sendFeeTier === tier} onClick={() => setSendFeeTier(tier)}><span>{tier === "priority" ? "⚡" : tier === "standard" ? "◷" : "○"}</span><strong>{tier === "priority" ? "优先" : tier === "standard" ? "标准" : "经济"}</strong><small>{SEND_FEE_RATES[tier].toString()} grains/vB</small></button>)}</div><div className="send-fee-rate"><span>当前费率</span><strong>{formatPrl(SEND_FEE_RATES[sendFeeTier] * 1000n)} PRL/kB</strong></div></div></div>
           <button className="primary send-preview-button" disabled={!snapshotFresh || !snapshot || !!snapshotError || !!snapshot.partial || busy || !sendAmount.trim() || !sendAddress.trim()}>预览转账</button>
         </form>}
@@ -1806,14 +2004,13 @@ export default function App() {
       {tab === "market" && fullBookOpen && <FullOrderBook source={marketSource as TradeSource} symbol={activeSymbol} quote={activeQuote} onBack={closeMarketDetail} />}
       {tab === "market" && tradeHistoryOpen && <TradeHistoryPage source={marketSource as TradeSource} symbol={activeSymbol} quote={activeQuote} onBack={closeMarketDetail} />}
       {tab === "market" && !fullBookOpen && !tradeHistoryOpen && <section className="trade-page">
-        <div className="market-source-switch" aria-label="行情来源"><button className={marketSource === "safetrade" ? "active" : ""} onClick={() => setMarketSource("safetrade")}><strong>PRL/USDT</strong><small>SafeTrade</small></button><button className={isWprl ? "active" : ""} onClick={() => setMarketSource("wprl")}><strong>WPRL/USDT</strong><small>Uniswap</small></button><button className={isHyperliquid ? "active" : ""} onClick={() => setMarketSource("hyperliquid")}><strong>{hyperliquidCoin}/{hyperliquidOverview?.contract?.quote ?? "USDC"}</strong><small>Hyperliquid · {hyperliquidOverview?.contract?.example === false ? "永续" : "示例"}</small></button><button className={isLighter ? "active" : ""} onClick={() => setMarketSource("lighter")}><strong>PRL/USDC</strong><small>Lighter · 永续</small></button></div>
-        <div className="pair-head"><div><h1>{activeExchange?.pair ?? `${activeSymbol}/${activeQuote}`}</h1><small>{isLighter ? "Lighter 永续 · 只读行情" : isHyperliquid ? `Hyperliquid 永续 · ${hyperliquidOverview?.contract?.example === false ? "只读行情" : "BTC 示例，非 PRL"}` : isWprl ? "以太坊 · Uniswap V3" : "SafeTrade 现货"}</small></div><button className="market-refresh" aria-label="刷新行情" onClick={() => { if (isLighter) { void refreshLighterOverview(); void refreshLighterCandles(interval); } else if (isHyperliquid) { void refreshHyperliquidOverview(); void refreshHyperliquidCandles(interval); } else if (isWprl) { void refreshWprlOverview(); void refreshWprlCandles(interval); } else refreshExchange(); }}><Icon name="refresh" size={19} /></button></div>
+        <div className="pair-head"><button type="button" className="market-pair-picker" onClick={() => { setSourcePickerOpen(true); void refreshOverview(); void refreshWprlOverview(); void refreshHyperliquidOverview(); void refreshLighterOverview(); void refreshAsterOverview(); }} aria-label="选择行情来源"><h1>{activeExchange?.pair ?? `${activeSymbol}/${activeQuote}`} <Icon name="chevron" size={18} /></h1><small>{isAster ? "Aster 永续 · 只读行情" : isLighter ? "Lighter 永续 · 只读行情" : isHyperliquid ? `Hyperliquid 永续 · ${hyperliquidOverview?.contract?.example === false ? "只读行情" : "BTC 示例，非 PRL"}` : isWprl ? "以太坊 · Uniswap V3" : "SafeTrade 现货"}</small></button><button className="market-refresh" aria-label="刷新行情" onClick={() => { if (isAster) { void refreshAsterOverview(); void refreshAsterCandles(interval); } else if (isLighter) { void refreshLighterOverview(); void refreshLighterCandles(interval); } else if (isHyperliquid) { void refreshHyperliquidOverview(); void refreshHyperliquidCandles(interval); } else if (isWprl) { void refreshWprlOverview(); void refreshWprlCandles(interval); } else refreshExchange(); }}><Icon name="refresh" size={19} /></button></div>
         <div className="market-summary"><div className="market-last"><strong className={(activeExchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{marketNumber(activeExchange?.price, isHyperliquid ? 2 : isLighter ? 4 : 8)}</strong><span>{activeQuote} <em className={(activeExchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{activeExchange?.stats24h?.changePercent == null ? "" : `${activeExchange.stats24h.changePercent >= 0 ? "+" : ""}${activeExchange.stats24h.changePercent.toFixed(2)}%`}</em></span></div><div className="market-stats"><div><span>{isPerp ? "标记价格" : "24h 最高"}</span><strong>{marketNumber(isPerp ? perpOverview?.markPrice : activeExchange?.stats24h?.high, isHyperliquid ? 2 : isLighter ? 4 : 8)}</strong></div><div><span>{isPerp ? "预言机价格" : "24h 最低"}</span><strong>{marketNumber(isPerp ? perpOverview?.oraclePrice : activeExchange?.stats24h?.low, isHyperliquid ? 2 : isLighter ? 4 : 8)}</strong></div><div><span>{isPerp ? "持仓量" : isWprl ? "池流动性" : "24h 成交量"}</span><strong>{isPerp ? `${compactMarketNumber(perpOverview?.openInterest)} ${activeSymbol}` : isWprl ? `${compactMarketNumber(wprlOverview?.liquidityUsd)} USD` : `${compactMarketNumber(exchange?.stats24h?.volume)} PRL`}</strong></div><div><span>{isPerp ? "资金费率" : "24h 成交额"}</span><strong>{isPerp ? perpOverview?.funding == null ? "—" : `${(perpOverview.funding * 100).toFixed(4)}%` : `${compactMarketNumber(activeExchange?.stats24h?.turnover)} ${isWprl && wprlOverview?.statsSource !== "recorded" ? "USD" : "USDT"}`}</strong></div></div></div>
         <div className="intervals">{INTERVALS.map((option) => <button key={option.id} className={interval === option.id ? "active" : ""} onClick={() => setIntervalValue(option.id)}>{option.label}</button>)}</div>
-        <div className="chart-card"><CandleChart key={`${marketSource}:${interval}`} candles={activeCandles} currentPrice={activeExchange?.price} loading={isLighter ? lighterRefreshing : isHyperliquid ? hyperliquidRefreshing : isWprl ? wprlRefreshing : marketRefreshing} status={activeSeries && Date.now() - activeSeries.updatedAt > (isPerp ? 90_000 : isWprl ? 45_000 : 15_000) ? `更新于 ${new Date(activeSeries.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""} symbol={activeSymbol} /></div>
-        {activeMarketError && <div className="inline-error">{activeMarketError}<button onClick={() => { if (isLighter) { void refreshLighterOverview(); void refreshLighterCandles(interval); } else if (isHyperliquid) { void refreshHyperliquidOverview(); void refreshHyperliquidCandles(interval); } else if (isWprl) { void refreshWprlOverview(); void refreshWprlCandles(interval); } else refreshExchange(); }}>重试</button></div>}
+        <div className="chart-card"><CandleChart key={`${marketSource}:${interval}`} candles={activeCandles} currentPrice={activeExchange?.price} loading={isAster ? asterRefreshing : isLighter ? lighterRefreshing : isHyperliquid ? hyperliquidRefreshing : isWprl ? wprlRefreshing : marketRefreshing} status={activeSeries && Date.now() - activeSeries.updatedAt > (isPerp ? 90_000 : isWprl ? 45_000 : 15_000) ? `更新于 ${new Date(activeSeries.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""} symbol={activeSymbol} /></div>
+        {activeMarketError && <div className="inline-error">{activeMarketError}<button onClick={() => { if (isAster) { void refreshAsterOverview(); void refreshAsterCandles(interval); } else if (isLighter) { void refreshLighterOverview(); void refreshLighterCandles(interval); } else if (isHyperliquid) { void refreshHyperliquidOverview(); void refreshHyperliquidCandles(interval); } else if (isWprl) { void refreshWprlOverview(); void refreshWprlCandles(interval); } else refreshExchange(); }}>重试</button></div>}
         {activeExchange?.marketError && <div className="inline-error">{activeExchange.marketError}</div>}
-{isWprl ? <><div className="market-tabs market-tabs-static"><strong>链上成交</strong><a href="https://www.geckoterminal.com/eth/pools/0x89a67c6dee35db9815da2fb9191f0998a8b37c39" target="_blank" rel="noreferrer">查看交易池 ↗</a></div><RecentTrades trades={wprlExchange?.trades} symbol="WPRL" /><div className="wprl-source-note">{wprlSeries?.source === "provider" ? "历史 K 线来自 GeckoTerminal" : wprlSeries?.source === "mixed" ? "起点前 K 线为外部参考，此后持续记录" : "K 线由服务器持续记录"}{(wprlSeries?.recordingSince || wprlOverview?.recordingSince) ? ` · ${new Date((wprlSeries?.recordingSince || wprlOverview?.recordingSince)!).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 起` : ""}</div></> : <><div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button><button type="button" className="full-book-entry" onClick={marketDetails === "depth" ? openFullBook : openTradeHistory}>{marketDetails === "depth" ? "查看完整盘口 ›" : "查看更多成交 ›"}</button></div>{marketDetails === "depth" ? <OrderBook depth={activeExchange?.depth} symbol={activeSymbol} quote={activeQuote} /> : <RecentTrades trades={activeExchange?.trades} symbol={activeSymbol} quote={activeQuote} />}{isPerp && <div className="wprl-source-note">{(isLighter ? lighterTradeSample : hyperliquidTradeSample) > 0 ? `高负载模式：最近成交抽样展示，跳过 ${isLighter ? lighterTradeSample : hyperliquidTradeSample} 笔 · ` : ""}K 线由服务器持续记录{(isLighter ? lighterSeries?.recordingSince : hyperliquidSeries?.recordingSince) ? ` · ${new Date((isLighter ? lighterSeries!.recordingSince! : hyperliquidSeries!.recordingSince!) * 1000).toLocaleDateString("zh-CN")} 起` : ""}</div>}</>}
+{isWprl ? <><div className="market-tabs market-tabs-static"><strong>链上成交</strong><a href="https://www.geckoterminal.com/eth/pools/0x89a67c6dee35db9815da2fb9191f0998a8b37c39" target="_blank" rel="noreferrer">查看交易池 ↗</a></div><RecentTrades trades={wprlExchange?.trades} symbol="WPRL" /><div className="wprl-source-note">{wprlSeries?.source === "provider" ? "历史 K 线来自 GeckoTerminal" : wprlSeries?.source === "mixed" ? "起点前 K 线为外部参考，此后持续记录" : "K 线由服务器持续记录"}{(wprlSeries?.recordingSince || wprlOverview?.recordingSince) ? ` · ${new Date((wprlSeries?.recordingSince || wprlOverview?.recordingSince)!).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 起` : ""}</div></> : <><div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button><button type="button" className="full-book-entry" onClick={marketDetails === "depth" ? openFullBook : openTradeHistory}>{marketDetails === "depth" ? "查看完整盘口 ›" : "查看更多成交 ›"}</button></div>{marketDetails === "depth" ? <OrderBook depth={activeExchange?.depth} symbol={activeSymbol} quote={activeQuote} /> : <RecentTrades trades={activeExchange?.trades} symbol={activeSymbol} quote={activeQuote} />}{isPerp && <div className="wprl-source-note">{perpTradeSample > 0 ? `高负载模式：最近成交抽样展示，跳过 ${perpTradeSample} 笔 · ` : ""}K 线由服务器持续记录{perpRecordingSince ? ` · ${new Date(perpRecordingSince! * 1000).toLocaleDateString("zh-CN")} 起` : ""}</div>}</>}
         {!isWprl && !isPerp && <>
         <div className="exchange-assets-head"><h2>现货资产</h2>{connectionToken && <div className="exchange-assets-actions"><button aria-label="刷新现货资产" title="刷新现货资产" onClick={refreshSafeTradeAccount}><Icon name="refresh" size={18} /></button><button aria-label="管理 SafeTrade 连接" title="管理连接" onClick={() => setAccountMenuOpen((open) => !open)}>•••</button>{accountMenuOpen && <div className="account-menu"><button onClick={() => { setAccountMenuOpen(false); void removeSafeTradeConnection(); }}>断开连接</button></div>}</div>}</div>
         {connectionToken ? <div className="exchange-balances"><div className="exchange-total"><span>预估总资产</span><strong>{spotEstimatedUSDT === null ? "—" : `≈ ${marketNumber(spotEstimatedUSDT, 2)}`} <small>USDT</small></strong></div>{(["PRL", "USDT"] as const).map((asset) => { const balance = account?.balances[asset]; const total = balance ? totalAssetBalance(balance) : null; const approximate = total === null || (asset === "PRL" && exchange?.price == null) ? NaN : asset === "USDT" ? Number(total) : Number(total) * exchange!.price!; return <div className="asset-card" key={asset}><img className="asset-logo" src={asset === "PRL" ? "/pearl-logo.svg" : "/usdt.svg"} alt="" /><div className="asset-info"><strong>{asset}</strong>{balance && Number(balance.locked) > 0 && <small>挂单占用 {balance.locked}</small>}</div><div className="asset-values"><strong>{total ?? "—"}</strong><small>{Number.isFinite(approximate) ? `≈ ${marketNumber(approximate, 2)} USDT` : "余额待更新"}</small></div></div>; })}</div> : <form className="safetrade-connect" onSubmit={(event) => { event.preventDefault(); void connectSafeTrade(); }}><Field label="只读 API Key" value={safeKey} onChange={setSafeKey} autoComplete="off" /><Field label="API Secret" value={safeSecret} onChange={setSafeSecret} type="password" autoComplete="off" /><button className="primary" disabled={connectingSafeTrade || !safeKey.trim() || !safeSecret.trim()}>{connectingSafeTrade ? "连接中…" : "连接 SafeTrade"}</button><p>密钥仅发送到 Pearl Wallet 服务器，用于读取 PRL 和 USDT 余额。</p></form>}
@@ -1822,6 +2019,7 @@ export default function App() {
       </section>}
 
       {tab === "setting" && <section className="settings-page"><div className="page-title"><h1>Setting</h1></div>
+        <div className="settings-card"><div className="settings-title"><Icon name="wallet" /><div><strong>地址簿</strong></div></div><button type="button" className="secondary wide" onClick={() => openAddressBook("manage")}>查看和管理地址</button></div>
         {blob && <>
           <div className="settings-card"><div className="settings-title"><Icon name="lock" /><div><strong>进入钱包时解锁</strong></div></div><button className="secondary wide" onClick={toggleUnlock}>{requireUnlock ? "已开启 · 点击关闭" : "已关闭 · 点击开启"}</button></div>
           <div className="settings-card"><div className="settings-title"><Icon name="lock" /><div><strong>修改钱包密码</strong></div></div><form onSubmit={changePassword}><Field label="当前密码" value={oldPassword} onChange={setOldPassword} type="password" autoComplete="current-password" /><Field label="新密码" value={newPassword} onChange={setNewPassword} type="password" autoComplete="new-password" /><button className="secondary wide" disabled={busy || !oldPassword || !newPassword}>修改密码</button></form></div>
@@ -1833,6 +2031,43 @@ export default function App() {
         <div className="settings-card"><div className="settings-title"><Icon name="wallet" /><div><strong>项目与支持</strong></div></div><div className="settings-links"><a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">官方网站 <span aria-hidden="true">↗</span></a><a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">GitHub 源码 <span aria-hidden="true">↗</span></a><a href={`mailto:${CONTACT_EMAIL}`}>联系邮箱 <span>{CONTACT_EMAIL}</span></a></div><div className="donation-block"><span>PRL 捐赠地址</span><button type="button" className="donation-copy" onClick={() => copy(DONATION_ADDRESS, "捐赠地址已复制")} aria-label="复制 PRL 捐赠地址"><span>{DONATION_ADDRESS}</span><Icon name="copy" size={18} /></button></div></div>
       </section>}
     </main>
+    {addressBookOpen && <div className="sheet-backdrop" onClick={() => setAddressBookOpen(false)}>
+      <section className="picker-sheet address-sheet" role="dialog" aria-modal="true" aria-label="地址簿" onClick={(event) => event.stopPropagation()}>
+        <div className="sheet-handle" />
+        <div className="sheet-heading"><h2>{addressBookPurpose === "send" ? "选择收款地址" : "地址簿"}</h2><button type="button" onClick={() => setAddressBookOpen(false)}>关闭</button></div>
+        <div className="address-sheet-list">
+          <div className="address-group"><h3>本机钱包</h3>
+            {profileStore.profiles.filter((profile) => profile.kind === "wallet").map((profile) => {
+              const rows = localAddressChoices.filter((entry) => entry.profileId === profile.id);
+              const expanded = expandedAddressWallets.has(profile.id);
+              return <div className="address-wallet-group" key={profile.id}>
+                <button type="button" className="address-wallet-toggle" aria-expanded={expanded} onClick={() => setExpandedAddressWallets((previous) => { const next = new Set(previous); if (next.has(profile.id)) next.delete(profile.id); else next.add(profile.id); return next; })}>
+                  <strong>{profile.name}</strong><span>{rows.length} 个地址 <Icon name="chevron" size={16} /></span>
+                </button>
+                {(expanded ? rows : rows.slice(0, 1)).map(addressBookRow)}
+              </div>;
+            })}
+            {!profileStore.profiles.some((profile) => profile.kind === "wallet") && <p className="address-empty">暂无本机钱包</p>}
+          </div>
+          <div className="address-group"><h3>观察地址</h3>{localAddressChoices.filter((entry) => entry.kind === "watch").map(addressBookRow)}
+            {!profileStore.profiles.some((profile) => profile.kind === "watch") && <p className="address-empty">暂无观察地址</p>}
+          </div>
+          <div className="address-group"><h3>已保存地址</h3>{savedAddresses.map((entry) => addressBookRow({ ...entry, kind: "saved" }))}
+            {!savedAddresses.length && <p className="address-empty">还没有手动保存的地址</p>}
+          </div>
+        </div>
+        {!addingAddress && addressBookError && <p className="address-book-error" role="alert">{addressBookError}</p>}
+        {addingAddress ? <form className="address-entry-form" onSubmit={saveAddressEntry}><h3>{editingAddress ? "编辑地址" : "添加地址"}</h3><input value={entryAddress} onChange={(event) => setEntryAddress(event.target.value)} placeholder="Pearl 主网地址" autoComplete="off" spellCheck={false} aria-label="新地址" /><input value={entryNote} onChange={(event) => setEntryNote(event.target.value)} placeholder="备注，例如交易所或朋友" maxLength={50} aria-label="地址备注" />{addressBookError && <p role="alert">{addressBookError}</p>}<div><button type="button" onClick={() => { setAddingAddress(false); setEditingAddress(null); setAddressBookError(""); }}>取消</button><button type="submit">保存</button></div></form> : <button type="button" className="add-address-button" onClick={() => { setAddingAddress(true); setEditingAddress(null); setEntryAddress(""); setEntryNote(""); setAddressBookError(""); }}>＋ 添加地址</button>}
+      </section>
+    </div>}
+    {sourcePickerOpen && <div className="sheet-backdrop" onClick={() => setSourcePickerOpen(false)}>
+      <section className="picker-sheet source-sheet" role="dialog" aria-modal="true" aria-label="选择行情来源" onClick={(event) => event.stopPropagation()}>
+        <div className="sheet-handle" />
+        <div className="sheet-heading"><h2>选择行情</h2><button type="button" onClick={() => setSourcePickerOpen(false)}>关闭</button></div>
+        <div className="source-categories">{([{ id: "all", label: "全部" }, { id: "spot", label: "现货" }, { id: "perp", label: "合约" }, { id: "chain", label: "链上" }] as const).map((option) => <button type="button" key={option.id} className={sourceCategory === option.id ? "active" : ""} onClick={() => setSourceCategory(option.id)}>{option.label}</button>)}</div>
+        <div className="source-list"><div className="source-list-head"><span>交易对 / 来源</span><span>最新价格 / 24h 涨跌</span></div>{visibleSources.map((option) => <button type="button" className={"source-row " + (marketSource === option.id ? "selected" : "")} key={option.id} onClick={() => { setMarketSource(option.id); setSourcePickerOpen(false); }}><span><strong>{option.pair}</strong><small>{option.venue}</small></span><span><strong>{marketNumber(option.market?.price, option.id === "hyperliquid" ? 2 : 6)}</strong><small className={(option.market?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{option.market?.stats24h?.changePercent == null ? "—" : (option.market.stats24h.changePercent >= 0 ? "+" : "") + option.market.stats24h.changePercent.toFixed(2) + "%"}</small></span></button>)}{!visibleSources.length && <p className="source-empty">此分类暂无行情</p>}</div>
+      </section>
+    </div>}
     {(error || notice) && <div className={error ? "toast error" : "toast"} role="status">{error || notice}<button onClick={() => { setError(""); setNotice(""); }}>×</button></div>}
     <nav className="bottom-nav" aria-label="主导航"><button className={tab === "wallet" ? "selected" : ""} onClick={() => { setTab("wallet"); setError(""); }}><Icon name="wallet" size={22} /><span>Wallet</span></button><button className={tab === "market" ? "selected" : ""} onClick={() => { setTab("market"); setError(""); }}><Icon name="chart" size={22} /><span>Market</span></button><button className={tab === "setting" ? "selected" : ""} onClick={() => { setTab("setting"); setError(""); }}><Icon name="setting" size={22} /><span>Setting</span></button></nav>
   </div>;
