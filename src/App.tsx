@@ -393,7 +393,7 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
       <div className="trade-filter-row trade-filter-prices"><label>最低价<input type="number" min="0" step="any" inputMode="decimal" placeholder={quote} value={minPrice} onChange={(event) => setMinPrice(event.target.value)} /></label><label>最高价<input type="number" min="0" step="any" inputMode="decimal" placeholder={quote} value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /></label><label>最小数量<input type="number" min="0" step="any" inputMode="decimal" placeholder={symbol} value={minAmount} onChange={(event) => setMinAmount(event.target.value)} /></label></div>
       <div className="trade-filter-actions"><button type="button" className="trade-sort-button" onClick={() => setSort((current) => current === 'time' ? 'amount_desc' : current === 'amount_desc' ? 'amount_asc' : 'time')} aria-label={sort === 'time' ? '按数量从大到小排序' : sort === 'amount_desc' ? '按数量从小到大排序' : '恢复按时间排序'}>{sort === 'time' ? '数量排序' : sort === 'amount_desc' ? '数量 ↓' : '数量 ↑'}</button><button type="button" onClick={reset}>重置</button><button type="submit">筛选</button><button type="button" onClick={() => setRefreshKey((key) => key + 1)}>刷新</button></div>
     </form>
-    <div className="trade-history-meta">{recordingSince ? `服务器记录始于 ${new Date(recordingSince * 1000).toLocaleString('zh-CN')}` : '服务器正在积累逐笔成交记录'} · 量条使用对数刻度{source === 'hyperliquid' && symbol === 'BTC' ? ' · BTC 示例仅保留最近 24 小时、最多 10 万笔' : ''}</div>
+    <div className="trade-history-meta">{recordingSince ? `服务器记录始于 ${new Date(recordingSince * 1000).toLocaleString('zh-CN')}` : '服务器正在积累逐笔成交记录'} · 色条长度对应成交量（对数刻度）{source === 'hyperliquid' && symbol === 'BTC' ? ' · BTC 示例仅保留最近 24 小时、最多 10 万笔' : ''}</div>
     {error && <p className="full-book-status" role="alert">{error}</p>}
     {loading ? <p className="full-book-status">正在查询成交记录…</p> : <><RecentTrades trades={rows} symbol={symbol} quote={quote} showDate />{nextCursor && <button type="button" className="trade-more-button" disabled={moreLoading} onClick={() => void loadMore()}>{moreLoading ? '加载中…' : '加载更多'}</button>}</>}
   </section>;
@@ -406,7 +406,8 @@ function RecentTrades({ trades, symbol = "PRL", quote = "USDT", showDate = false
     {trades?.length ? trades.map((trade) => <div className="trade-row" key={trade.id}>
       <span>{showDate ? new Date(trade.time * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : new Date(trade.time * 1000).toLocaleTimeString("zh-CN", { hour12: false })}{showDate ? ` ${trade.side === 'buy' ? '买' : '卖'}` : ''}</span>
       <span className={trade.side === 'buy' ? 'positive' : 'negative'}>{marketNumber(trade.price, 8)}</span>
-      <span className="trade-amount" aria-label={`数量 ${alignedTradeAmount(trade.amount)} ${symbol}；量条按对数刻度显示`}><i className={trade.side === 'buy' ? 'buy' : 'sell'} style={{ width: `${maxAmount ? Math.max(5, 100 * Math.log1p(trade.amount) / Math.log1p(maxAmount)) : 0}%` }} /><span>{alignedTradeAmount(trade.amount)}</span></span>
+      <span className="trade-amount">{alignedTradeAmount(trade.amount)}</span>
+      <i className={`trade-volume-bar ${trade.side === 'buy' ? 'buy' : 'sell'}`} style={{ width: `${maxAmount ? Math.max(5, 100 * Math.log1p(trade.amount) / Math.log1p(maxAmount)) : 0}%` }} aria-hidden="true" />
     </div>) : <div className="market-empty">暂无成交记录</div>}
   </div>;
 }
