@@ -196,6 +196,10 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .book-row.ask span:first-child { color: #cb5262; }.book-row.bid span:first-child { color: #168a5e; }
 .book-spread { text-align: center; color: #9aa3ae; font-size: 11px; padding: 11px 0; border-block: 1px solid #eceff2; margin: 5px 0; }
 .trade-row + .trade-row { border-top: 1px solid #f2f3f5; }
+.trade-amount { position: relative; display: flex; align-items: center; justify-content: flex-end; min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.trade-amount i { position: absolute; z-index: 0; left: 0; top: 50%; height: 68%; transform: translateY(-50%); border-radius: 0 3px 3px 0; pointer-events: none; }
+.trade-amount i.buy { background: #5eba8940; }.trade-amount i.sell { background: #e2546040; }
+.trade-amount > span { position: relative; z-index: 1; }
 .market-empty { text-align: center; padding: 35px 0; color: #8995a4; font-size: 13px; }
 .safetrade-connect { background: #fff; border: 1px solid #e1e5eb; border-radius: 15px; padding: 18px; }
 .safetrade-connect p { color: #8a95a4; font-size: 11px; line-height: 1.5; margin: 13px 0 0; }
@@ -352,6 +356,7 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .trade-filter-row label { min-width: 0; display: grid; gap: 5px; color: #858f8c; font-size: 11px; }
 .trade-filter-row input, .trade-filter-row select { width: 100%; min-width: 0; height: 35px; border: 1px solid #e2e7e4; border-radius: 7px; background: #fff; padding: 0 8px; color: #1c2922; font-size: 12px; }
 .trade-filter-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.trade-filter-actions .trade-sort-button { margin-right: auto; white-space: nowrap; padding-inline: 9px; }
 .trade-filter-actions button, .trade-more-button { min-height: 34px; border: 1px solid #dfe7e1; border-radius: 7px; background: #fff; padding: 0 14px; color: #315342; font-size: 12px; }
 .trade-filter-actions button[type='submit'] { color: #fff; border-color: #214c34; background: #214c34; }
 .trade-history-meta { margin: 18px 18px 8px; color: #8a9691; font-size: 11px; }

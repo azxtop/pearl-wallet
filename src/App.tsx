@@ -223,6 +223,10 @@ function marketNumber(value: number | null | undefined, digits = 4) {
   return value == null || !Number.isFinite(value) ? "—" : value.toLocaleString("en-US", { maximumFractionDigits: digits });
 }
 
+function alignedTradeAmount(value: number) {
+  return value.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+}
+
 function compactMarketNumber(value: number | null | undefined) {
   return value == null || !Number.isFinite(value) ? "—" : new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 }).format(value);
 }
@@ -318,6 +322,7 @@ function FullOrderBook({ source, symbol, quote, onBack }: { source: TradeSource;
 }
 
 function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSource; symbol: string; quote: string; onBack: () => void }) {
+  const [sort, setSort] = useState<"time" | "amount_desc" | "amount_asc">("time");
   const [period, setPeriod] = useState('24h');
   const [fromInput, setFromInput] = useState('');
   const [toInput, setToInput] = useState('');
@@ -338,13 +343,13 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
     const generation = ++queryGeneration.current;
     let cancelled = false;
     setLoading(true); setMoreLoading(false); setError(''); setRows([]); setNextCursor(null);
-    loadTradeHistory(source, filters).then((page) => {
+    loadTradeHistory(source, { ...filters, sort }).then((page) => {
       if (cancelled || generation !== queryGeneration.current) return;
       setRows(page.trades); setNextCursor(page.nextCursor); setRecordingSince(page.recordingSince);
     }).catch((failure) => { if (!cancelled && generation === queryGeneration.current) setError(failure instanceof Error ? failure.message : '成交记录暂不可用'); })
       .finally(() => { if (!cancelled && generation === queryGeneration.current) setLoading(false); });
     return () => { cancelled = true; };
-  }, [source, filters, refreshKey]);
+  }, [source, filters, sort, refreshKey]);
   const applyFilters = (event: FormEvent) => {
     event.preventDefault();
     const now = Math.floor(Date.now() / 1000);
@@ -364,6 +369,7 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
   };
   const reset = () => {
     setPeriod('24h'); setFromInput(''); setToInput(''); setSide(''); setMinPrice(''); setMaxPrice(''); setMinAmount('');
+    setSort('time');
     setFilters({ from: String(Math.floor(Date.now() / 1000) - 86400) });
   };
   const loadMore = async () => {
@@ -371,30 +377,38 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
     const generation = queryGeneration.current;
     setMoreLoading(true); setError('');
     try {
-      const page: TradeHistoryResult = await loadTradeHistory(source, { ...filters, cursor: nextCursor });
+      const page: TradeHistoryResult = await loadTradeHistory(source, { ...filters, sort, cursor: nextCursor });
       if (generation !== queryGeneration.current) return;
       setRows((previous) => { const ids = new Set(previous.map((row) => row.id)); return [...previous, ...page.trades.filter((row) => !ids.has(row.id))]; });
       setNextCursor(page.nextCursor);
     } catch (failure) { if (generation === queryGeneration.current) setError(failure instanceof Error ? failure.message : '加载失败'); }
     finally { if (generation === queryGeneration.current) setMoreLoading(false); }
   };
-  const venue = source === 'hyperliquid' ? 'Hyperliquid' : source === 'lighter' ? 'Lighter' : 'SafeTrade';
+  const venue = source === 'hyperliquid' ? 'Hyperliquid' : source === 'lighter' ? 'Lighter' : source === 'aster' ? 'Aster' : 'SafeTrade';
   return <section className="trade-page full-book-page trade-history-page">
     <div className="full-book-header"><button type="button" aria-label="返回 Market" onClick={onBack}><Icon name="back" size={22} /></button><div><h1>成交记录</h1><small>{venue} · {symbol}/{quote}</small></div></div>
     <form className="trade-history-filters" onSubmit={applyFilters}>
       <div className="trade-filter-row"><label>时间<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="1h">近 1 小时</option><option value="24h">近 24 小时</option><option value="7d">近 7 天</option><option value="custom">自定义</option></select></label><label>方向<select value={side} onChange={(event) => setSide(event.target.value)}><option value="">全部</option><option value="buy">买入</option><option value="sell">卖出</option></select></label></div>
       {period === 'custom' && <div className="trade-filter-row"><label>开始<input type="datetime-local" value={fromInput} onChange={(event) => setFromInput(event.target.value)} /></label><label>结束<input type="datetime-local" value={toInput} onChange={(event) => setToInput(event.target.value)} /></label></div>}
       <div className="trade-filter-row trade-filter-prices"><label>最低价<input type="number" min="0" step="any" inputMode="decimal" placeholder={quote} value={minPrice} onChange={(event) => setMinPrice(event.target.value)} /></label><label>最高价<input type="number" min="0" step="any" inputMode="decimal" placeholder={quote} value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /></label><label>最小数量<input type="number" min="0" step="any" inputMode="decimal" placeholder={symbol} value={minAmount} onChange={(event) => setMinAmount(event.target.value)} /></label></div>
-      <div className="trade-filter-actions"><button type="button" onClick={reset}>重置</button><button type="submit">筛选</button><button type="button" onClick={() => setRefreshKey((key) => key + 1)}>刷新</button></div>
+      <div className="trade-filter-actions"><button type="button" className="trade-sort-button" onClick={() => setSort((current) => current === 'time' ? 'amount_desc' : current === 'amount_desc' ? 'amount_asc' : 'time')} aria-label={sort === 'time' ? '按数量从大到小排序' : sort === 'amount_desc' ? '按数量从小到大排序' : '恢复按时间排序'}>{sort === 'time' ? '数量排序' : sort === 'amount_desc' ? '数量 ↓' : '数量 ↑'}</button><button type="button" onClick={reset}>重置</button><button type="submit">筛选</button><button type="button" onClick={() => setRefreshKey((key) => key + 1)}>刷新</button></div>
     </form>
-    <div className="trade-history-meta">{recordingSince ? `服务器记录始于 ${new Date(recordingSince * 1000).toLocaleString('zh-CN')}` : '服务器正在积累逐笔成交记录'}{source === 'hyperliquid' && symbol === 'BTC' ? ' · BTC 示例仅保留最近 24 小时、最多 10 万笔' : ''}</div>
+    <div className="trade-history-meta">{recordingSince ? `服务器记录始于 ${new Date(recordingSince * 1000).toLocaleString('zh-CN')}` : '服务器正在积累逐笔成交记录'} · 量条使用对数刻度{source === 'hyperliquid' && symbol === 'BTC' ? ' · BTC 示例仅保留最近 24 小时、最多 10 万笔' : ''}</div>
     {error && <p className="full-book-status" role="alert">{error}</p>}
     {loading ? <p className="full-book-status">正在查询成交记录…</p> : <><RecentTrades trades={rows} symbol={symbol} quote={quote} showDate />{nextCursor && <button type="button" className="trade-more-button" disabled={moreLoading} onClick={() => void loadMore()}>{moreLoading ? '加载中…' : '加载更多'}</button>}</>}
   </section>;
 }
 
 function RecentTrades({ trades, symbol = "PRL", quote = "USDT", showDate = false }: { trades: MarketData["trades"] | undefined; symbol?: string; quote?: string; showDate?: boolean }) {
-  return <div className="recent-trades"><div className="book-labels"><span>时间{showDate ? ' / 方向' : ''}</span><span>价格 ({quote})</span><span>数量 ({symbol})</span></div>{trades?.length ? trades.map((trade) => <div className="trade-row" key={trade.id}><span>{showDate ? new Date(trade.time * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : new Date(trade.time * 1000).toLocaleTimeString("zh-CN", { hour12: false })}{showDate ? ` ${trade.side === 'buy' ? '买' : '卖'}` : ''}</span><span className={trade.side === "buy" ? "positive" : "negative"}>{marketNumber(trade.price, 8)}</span><span>{marketNumber(trade.amount, 4)}</span></div>) : <div className="market-empty">暂无成交记录</div>}</div>;
+  const maxAmount = (trades ?? []).reduce((max, trade) => Math.max(max, trade.amount), 0);
+  return <div className="recent-trades">
+    <div className="book-labels"><span>时间{showDate ? ' / 方向' : ''}</span><span>价格 ({quote})</span><span>数量 ({symbol})</span></div>
+    {trades?.length ? trades.map((trade) => <div className="trade-row" key={trade.id}>
+      <span>{showDate ? new Date(trade.time * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : new Date(trade.time * 1000).toLocaleTimeString("zh-CN", { hour12: false })}{showDate ? ` ${trade.side === 'buy' ? '买' : '卖'}` : ''}</span>
+      <span className={trade.side === 'buy' ? 'positive' : 'negative'}>{marketNumber(trade.price, 8)}</span>
+      <span className="trade-amount" aria-label={`数量 ${alignedTradeAmount(trade.amount)} ${symbol}；量条按对数刻度显示`}><i className={trade.side === 'buy' ? 'buy' : 'sell'} style={{ width: `${maxAmount ? Math.max(5, 100 * Math.log1p(trade.amount) / Math.log1p(maxAmount)) : 0}%` }} /><span>{alignedTradeAmount(trade.amount)}</span></span>
+    </div>) : <div className="market-empty">暂无成交记录</div>}
+  </div>;
 }
 
 export default function App() {

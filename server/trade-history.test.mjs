@@ -21,3 +21,25 @@ test('trade history deduplicates, filters and paginates within a market', () => 
     assert.throws(() => history.query('lighter', '101', { minPrice: '-1' }), /Invalid filter/);
   } finally { history.close(); rmSync(folder, { recursive: true, force: true }); }
 });
+
+test('amount ordering paginates the entire filtered market without repeats', () => {
+  const folder = mkdtempSync(join(tmpdir(), 'pearl-trades-sort-'));
+  const history = createTradeHistory(join(folder, 'trades.sqlite'), { now: () => 2_000_000_000_000 });
+  try {
+    history.add('safetrade', 'PRL/USDT', [
+      { id: 'a', time: 2_000_000_000, price: 1, amount: 1.01, side: 'buy' },
+      { id: 'b', time: 2_000_000_001, price: 1, amount: 101, side: 'sell' },
+      { id: 'c', time: 2_000_000_002, price: 1, amount: 101, side: 'buy' },
+      { id: 'd', time: 2_000_000_003, price: 1, amount: 3, side: 'sell' },
+    ]);
+    const descending = history.query('safetrade', 'PRL/USDT', { sort: 'amount_desc', limit: 2 });
+    assert.deepEqual(descending.trades.map((row) => row.id), ['c', 'b']);
+    assert.deepEqual(history.query('safetrade', 'PRL/USDT', { sort: 'amount_desc', limit: 2, cursor: descending.nextCursor }).trades.map((row) => row.id), ['d', 'a']);
+    const ascending = history.query('safetrade', 'PRL/USDT', { sort: 'amount_asc', limit: 2 });
+    assert.deepEqual(ascending.trades.map((row) => row.id), ['a', 'd']);
+    assert.deepEqual(history.query('safetrade', 'PRL/USDT', { sort: 'amount_asc', limit: 2, cursor: ascending.nextCursor }).trades.map((row) => row.id), ['b', 'c']);
+    assert.deepEqual(history.query('safetrade', 'PRL/USDT', { sort: 'amount_desc', side: 'buy' }).trades.map((row) => row.id), ['c', 'a']);
+    assert.throws(() => history.query('safetrade', 'PRL/USDT', { sort: 'amount_asc', cursor: descending.nextCursor }), /Invalid cursor/);
+    assert.throws(() => history.query('safetrade', 'PRL/USDT', { sort: 'price_desc' }), /Invalid sort/);
+  } finally { history.close(); rmSync(folder, { recursive: true, force: true }); }
+});

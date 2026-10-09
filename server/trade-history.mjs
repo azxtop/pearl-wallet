@@ -10,7 +10,8 @@ export function createTradeHistory(path, { now = Date.now } = {}) {
       time INTEGER NOT NULL, price REAL NOT NULL, amount REAL NOT NULL,
       side TEXT NOT NULL, PRIMARY KEY (source, market, id)
     );
-    CREATE INDEX IF NOT EXISTS trades_recent ON trades(source, market, time DESC, id DESC);`);
+    CREATE INDEX IF NOT EXISTS trades_recent ON trades(source, market, time DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS trades_amount ON trades(source, market, amount DESC, time DESC, id DESC);`);
   const insert = db.prepare('INSERT OR IGNORE INTO trades(source,market,id,time,price,amount,side) VALUES(?,?,?,?,?,?,?)');
   const earliest = db.prepare('SELECT MIN(time) AS time FROM trades WHERE source=? AND market=?');
   const pending = [];
@@ -46,6 +47,8 @@ export function createTradeHistory(path, { now = Date.now } = {}) {
   function query(source, market, filters = {}) {
     if (!SOURCES.has(source) || !market) throw new Error('Unsupported market');
     flush();
+    const sort = filters.sort || 'time';
+    if (!['time', 'amount_desc', 'amount_asc'].includes(sort)) throw new Error('Invalid sort');
     const clauses = ['source=?', 'market=?'];
     const params = [source, market];
     for (const [name, operator] of [['from', '>='], ['to', '<='], ['minPrice', '>='], ['maxPrice', '<='], ['minAmount', '>=']]) {
@@ -64,15 +67,22 @@ export function createTradeHistory(path, { now = Date.now } = {}) {
     if (filters.cursor) {
       let cursor;
       try { cursor = JSON.parse(Buffer.from(filters.cursor, 'base64url').toString('utf8')); } catch { throw new Error('Invalid cursor'); }
-      if (!Number.isSafeInteger(cursor?.time) || typeof cursor?.id !== 'string' || cursor.id.length > 128) throw new Error('Invalid cursor');
-      clauses.push('(time<? OR (time=? AND id<?))');
-      params.push(cursor.time, cursor.time, cursor.id);
+      if (!Number.isSafeInteger(cursor?.time) || typeof cursor?.id !== 'string' || !cursor.id || cursor.id.length > 128 || (cursor.sort || 'time') !== sort) throw new Error('Invalid cursor');
+      if (sort === 'time') {
+        clauses.push('(time,id)<(?,?)');
+        params.push(cursor.time, cursor.id);
+      } else {
+        if (!Number.isFinite(cursor.amount) || cursor.amount <= 0) throw new Error('Invalid cursor');
+        clauses.push(sort === 'amount_desc' ? '(amount,time,id)<(?,?,?)' : '(amount,time,id)>(?,?,?)');
+        params.push(cursor.amount, cursor.time, cursor.id);
+      }
     }
     const limit = Math.min(100, Math.max(1, Number(filters.limit) || 100));
-    const rows = db.prepare(`SELECT id,time,price,amount,side FROM trades WHERE ${clauses.join(' AND ')} ORDER BY time DESC,id DESC LIMIT ?`).all(...params, limit + 1);
+    const order = sort === 'time' ? 'time DESC,id DESC' : sort === 'amount_desc' ? 'amount DESC,time DESC,id DESC' : 'amount ASC,time ASC,id ASC';
+    const rows = db.prepare(`SELECT id,time,price,amount,side FROM trades WHERE ${clauses.join(' AND ')} ORDER BY ${order} LIMIT ?`).all(...params, limit + 1);
     const items = rows.slice(0, limit);
     const last = items.at(-1);
-    return { trades: items, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify({ time: last.time, id: last.id })).toString('base64url') : null,
+    return { trades: items, nextCursor: rows.length > limit && last ? Buffer.from(JSON.stringify({ sort, time: last.time, id: last.id, ...(sort === 'time' ? {} : { amount: last.amount }) })).toString('base64url') : null,
       recordingSince: earliest.get(source, market)?.time ?? null };
   }
 
