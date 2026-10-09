@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Fix biometric unlock for multiple wallets. Each wallet now keeps a separate biometric-protected recovery phrase, and existing single-wallet biometric data remains available after upgrading. A wallet whose biometric data was overwritten by the previous version must be enabled once again using its password.\n\nSHA-256: ${hash}`,
+      body: `Pearl Wallet 0.2.31 预发布版\n\n- 发送地址簿支持本机钱包、观察地址与自定义备注地址，可从设置打开。\n- Market 新增 Aster PEARL/USDT 永续行情源，来源选择窗口保持固定高度。\n- 成交记录支持数量排序和小数位对齐；买卖量条从行首显示，按成交量平方根缩放。\n- 订单簿与成交记录使用相同的红绿色条深度。\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);
