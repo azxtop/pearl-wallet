@@ -338,11 +338,19 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
   const [loading, setLoading] = useState(false);
   const [moreLoading, setMoreLoading] = useState(false);
   const [error, setError] = useState('');
+  const [pullDistance, setPullDistance] = useState(0);
   const queryGeneration = useRef(0);
+  const previousQuery = useRef('');
+  const pullStart = useRef<number | null>(null);
+  const pullDistanceRef = useRef(0);
   useEffect(() => {
     const generation = ++queryGeneration.current;
     let cancelled = false;
-    setLoading(true); setMoreLoading(false); setError(''); setRows([]); setNextCursor(null);
+    const query = JSON.stringify([source, filters, sort]);
+    const keepRows = previousQuery.current === query;
+    previousQuery.current = query;
+    setLoading(true); setMoreLoading(false); setError('');
+    if (!keepRows) { setRows([]); setNextCursor(null); }
     loadTradeHistory(source, { ...filters, sort }).then((page) => {
       if (cancelled || generation !== queryGeneration.current) return;
       setRows(page.trades); setNextCursor(page.nextCursor); setRecordingSince(page.recordingSince);
@@ -384,18 +392,35 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
     } catch (failure) { if (generation === queryGeneration.current) setError(failure instanceof Error ? failure.message : '加载失败'); }
     finally { if (generation === queryGeneration.current) setMoreLoading(false); }
   };
+  const refreshHistory = () => { if (!loading) setRefreshKey((key) => key + 1); };
+  const resetPull = () => { pullStart.current = null; pullDistanceRef.current = 0; setPullDistance(0); };
+  const startPull = (event: React.TouchEvent<HTMLElement>) => {
+    if (window.scrollY > 2 || event.touches.length !== 1 || loading || (event.target instanceof Element && event.target.closest('button, input, select, textarea'))) { resetPull(); return; }
+    const x = event.touches[0]!.clientX;
+    if (x < 28 || x > window.innerWidth - 28) { resetPull(); return; }
+    pullStart.current = event.touches[0]!.clientY;
+  };
+  const movePull = (event: React.TouchEvent<HTMLElement>) => {
+    if (event.touches.length !== 1) { resetPull(); return; }
+    if (pullStart.current === null) return;
+    pullDistanceRef.current = Math.min(84, Math.max(0, (event.touches[0]!.clientY - pullStart.current) / 2));
+    setPullDistance(pullDistanceRef.current);
+  };
+  const endPull = () => { const refresh = pullDistanceRef.current >= 48; resetPull(); if (refresh) refreshHistory(); };
   const venue = source === 'hyperliquid' ? 'Hyperliquid' : source === 'lighter' ? 'Lighter' : source === 'aster' ? 'Aster' : 'SafeTrade';
-  return <section className="trade-page full-book-page trade-history-page">
+  return <section className="trade-page full-book-page trade-history-page" onTouchStart={startPull} onTouchMove={movePull} onTouchEnd={endPull} onTouchCancel={resetPull}>
     <div className="full-book-header"><button type="button" aria-label="返回 Market" onClick={onBack}><Icon name="back" size={22} /></button><div><h1>成交记录</h1><small>{venue} · {symbol}/{quote}</small></div></div>
+    {pullDistance > 0 && <div className="trade-history-pull-indicator" style={{ height: pullDistance }}>{pullDistance >= 48 ? '松开刷新' : '下拉刷新'}</div>}
     <form className="trade-history-filters" onSubmit={applyFilters}>
       <div className="trade-filter-row"><label>时间<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="1h">近 1 小时</option><option value="24h">近 24 小时</option><option value="7d">近 7 天</option><option value="custom">自定义</option></select></label><label>方向<select value={side} onChange={(event) => setSide(event.target.value)}><option value="">全部</option><option value="buy">买入</option><option value="sell">卖出</option></select></label></div>
       {period === 'custom' && <div className="trade-filter-row"><label>开始<input type="datetime-local" value={fromInput} onChange={(event) => setFromInput(event.target.value)} /></label><label>结束<input type="datetime-local" value={toInput} onChange={(event) => setToInput(event.target.value)} /></label></div>}
       <div className="trade-filter-row trade-filter-prices"><label>最低价<input type="number" min="0" step="any" inputMode="decimal" placeholder={quote} value={minPrice} onChange={(event) => setMinPrice(event.target.value)} /></label><label>最高价<input type="number" min="0" step="any" inputMode="decimal" placeholder={quote} value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} /></label><label>最小数量<input type="number" min="0" step="any" inputMode="decimal" placeholder={symbol} value={minAmount} onChange={(event) => setMinAmount(event.target.value)} /></label></div>
-      <div className="trade-filter-actions"><button type="button" className="trade-sort-button" onClick={() => setSort((current) => current === 'time' ? 'amount_desc' : current === 'amount_desc' ? 'amount_asc' : 'time')} aria-label={sort === 'time' ? '按数量从大到小排序' : sort === 'amount_desc' ? '按数量从小到大排序' : '恢复按时间排序'}>{sort === 'time' ? '数量排序' : sort === 'amount_desc' ? '数量 ↓' : '数量 ↑'}</button><button type="button" onClick={reset}>重置</button><button type="submit">筛选</button><button type="button" onClick={() => setRefreshKey((key) => key + 1)}>刷新</button></div>
+      <div className="trade-filter-actions"><button type="button" className="trade-sort-button" onClick={() => setSort((current) => current === 'time' ? 'amount_desc' : current === 'amount_desc' ? 'amount_asc' : 'time')} aria-label={sort === 'time' ? '按数量从大到小排序' : sort === 'amount_desc' ? '按数量从小到大排序' : '恢复按时间排序'}>{sort === 'time' ? '数量排序' : sort === 'amount_desc' ? '数量 ↓' : '数量 ↑'}</button><button type="button" onClick={reset}>重置</button><button type="submit">筛选</button><button type="button" onClick={refreshHistory}>刷新</button></div>
     </form>
     <div className="trade-history-meta">{recordingSince ? `服务器记录始于 ${new Date(recordingSince * 1000).toLocaleString('zh-CN')}` : '服务器正在积累逐笔成交记录'} · 色条长度按成交量平方根缩放{source === 'hyperliquid' && symbol === 'BTC' ? ' · BTC 示例仅保留最近 24 小时、最多 10 万笔' : ''}</div>
     {error && <p className="full-book-status" role="alert">{error}</p>}
-    {loading ? <p className="full-book-status">正在查询成交记录…</p> : <><RecentTrades trades={rows} symbol={symbol} quote={quote} showDate />{nextCursor && <button type="button" className="trade-more-button" disabled={moreLoading} onClick={() => void loadMore()}>{moreLoading ? '加载中…' : '加载更多'}</button>}</>}
+    {loading && <p className="full-book-status" role="status">{rows.length ? '正在刷新成交记录…' : '正在查询成交记录…'}</p>}
+    {(!loading || rows.length > 0) && <><RecentTrades trades={rows} symbol={symbol} quote={quote} showDate />{nextCursor && <button type="button" className="trade-more-button" disabled={loading || moreLoading} onClick={() => void loadMore()}>{moreLoading ? '加载中…' : '加载更多'}</button>}</>}
   </section>;
 }
 

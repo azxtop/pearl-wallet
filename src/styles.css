@@ -351,6 +351,7 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .full-book-status { margin: 9px 18px 0; color: #84918b; font-size: 12px; }
 .full-book-page .book { margin-top: 5px; }
 .trade-history-filters { margin: 18px 18px 0; display: grid; gap: 10px; }
+.trade-history-pull-indicator { display: grid; place-items: center; overflow: hidden; color: #607086; font-size: 12px; }
 .trade-filter-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .trade-filter-prices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .trade-filter-row label { min-width: 0; display: grid; gap: 5px; color: #858f8c; font-size: 11px; }
