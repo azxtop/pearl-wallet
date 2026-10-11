@@ -338,17 +338,22 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
   const [loading, setLoading] = useState(false);
   const [moreLoading, setMoreLoading] = useState(false);
   const [error, setError] = useState('');
-  const [pullDistance, setPullDistance] = useState(0);
   const queryGeneration = useRef(0);
   const previousQuery = useRef('');
   const pullStart = useRef<number | null>(null);
   const pullDistanceRef = useRef(0);
+  const pullIndicator = useRef<HTMLDivElement>(null);
+  const loadMoreButton = useRef<HTMLButtonElement>(null);
+  const moreLoadingRef = useRef(false);
+  const autoLoadFailedCursor = useRef<string | null>(null);
   useEffect(() => {
     const generation = ++queryGeneration.current;
     let cancelled = false;
     const query = JSON.stringify([source, filters, sort]);
     const keepRows = previousQuery.current === query;
     previousQuery.current = query;
+    moreLoadingRef.current = false;
+    autoLoadFailedCursor.current = null;
     setLoading(true); setMoreLoading(false); setError('');
     if (!keepRows) { setRows([]); setNextCursor(null); }
     loadTradeHistory(source, { ...filters, sort }).then((page) => {
@@ -381,19 +386,30 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
     setFilters({ from: String(Math.floor(Date.now() / 1000) - 86400) });
   };
   const loadMore = async () => {
-    if (!nextCursor || loading || moreLoading) return;
+    if (!nextCursor || loading || moreLoadingRef.current) return;
     const generation = queryGeneration.current;
+    moreLoadingRef.current = true;
     setMoreLoading(true); setError('');
     try {
       const page: TradeHistoryResult = await loadTradeHistory(source, { ...filters, sort, cursor: nextCursor });
       if (generation !== queryGeneration.current) return;
+      autoLoadFailedCursor.current = null;
       setRows((previous) => { const ids = new Set(previous.map((row) => row.id)); return [...previous, ...page.trades.filter((row) => !ids.has(row.id))]; });
       setNextCursor(page.nextCursor);
-    } catch (failure) { if (generation === queryGeneration.current) setError(failure instanceof Error ? failure.message : '加载失败'); }
-    finally { if (generation === queryGeneration.current) setMoreLoading(false); }
+    } catch (failure) { if (generation === queryGeneration.current) { autoLoadFailedCursor.current = nextCursor; setError(failure instanceof Error ? failure.message : '加载失败'); } }
+    finally { if (generation === queryGeneration.current) { moreLoadingRef.current = false; setMoreLoading(false); } }
   };
+  useEffect(() => {
+    if (!nextCursor || loading || moreLoading || autoLoadFailedCursor.current === nextCursor || !loadMoreButton.current) return;
+    const observer = new IntersectionObserver(([entry]) => { if (entry?.isIntersecting) void loadMore(); }, { rootMargin: '0px 0px 100px 0px' });
+    observer.observe(loadMoreButton.current);
+    return () => observer.disconnect();
+  }, [source, filters, sort, nextCursor, loading, moreLoading, rows.length]);
   const refreshHistory = () => { if (!loading) setRefreshKey((key) => key + 1); };
-  const resetPull = () => { pullStart.current = null; pullDistanceRef.current = 0; setPullDistance(0); };
+  const resetPull = () => {
+    pullStart.current = null; pullDistanceRef.current = 0;
+    if (pullIndicator.current) { pullIndicator.current.style.opacity = '0'; pullIndicator.current.style.transform = 'translate3d(-50%, -48px, 0)'; }
+  };
   const startPull = (event: React.TouchEvent<HTMLElement>) => {
     if (window.scrollY > 2 || event.touches.length !== 1 || loading || (event.target instanceof Element && event.target.closest('button, input, select, textarea'))) { resetPull(); return; }
     const x = event.touches[0]!.clientX;
@@ -404,13 +420,21 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
     if (event.touches.length !== 1) { resetPull(); return; }
     if (pullStart.current === null) return;
     pullDistanceRef.current = Math.min(84, Math.max(0, (event.touches[0]!.clientY - pullStart.current) / 2));
-    setPullDistance(pullDistanceRef.current);
+    if (pullIndicator.current) {
+      pullIndicator.current.style.opacity = pullDistanceRef.current > 0 ? '1' : '0';
+      pullIndicator.current.style.transform = `translate3d(-50%, ${Math.min(0, pullDistanceRef.current - 48)}px, 0)`;
+      const ready = pullDistanceRef.current >= 48;
+      if (pullIndicator.current.dataset.ready !== String(ready)) {
+        pullIndicator.current.dataset.ready = String(ready);
+        pullIndicator.current.textContent = ready ? '松开刷新' : '下拉刷新';
+      }
+    }
   };
   const endPull = () => { const refresh = pullDistanceRef.current >= 48; resetPull(); if (refresh) refreshHistory(); };
   const venue = source === 'hyperliquid' ? 'Hyperliquid' : source === 'lighter' ? 'Lighter' : source === 'aster' ? 'Aster' : 'SafeTrade';
   return <section className="trade-page full-book-page trade-history-page" onTouchStart={startPull} onTouchMove={movePull} onTouchEnd={endPull} onTouchCancel={resetPull}>
     <div className="full-book-header"><button type="button" aria-label="返回 Market" onClick={onBack}><Icon name="back" size={22} /></button><div><h1>成交记录</h1><small>{venue} · {symbol}/{quote}</small></div></div>
-    {pullDistance > 0 && <div className="trade-history-pull-indicator" style={{ height: pullDistance }}>{pullDistance >= 48 ? '松开刷新' : '下拉刷新'}</div>}
+    <div className="trade-history-pull-indicator" ref={pullIndicator} aria-hidden="true">下拉刷新</div>
     <form className="trade-history-filters" onSubmit={applyFilters}>
       <div className="trade-filter-row"><label>时间<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="1h">近 1 小时</option><option value="24h">近 24 小时</option><option value="7d">近 7 天</option><option value="custom">自定义</option></select></label><label>方向<select value={side} onChange={(event) => setSide(event.target.value)}><option value="">全部</option><option value="buy">买入</option><option value="sell">卖出</option></select></label></div>
       {period === 'custom' && <div className="trade-filter-row"><label>开始<input type="datetime-local" value={fromInput} onChange={(event) => setFromInput(event.target.value)} /></label><label>结束<input type="datetime-local" value={toInput} onChange={(event) => setToInput(event.target.value)} /></label></div>}
@@ -420,7 +444,7 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
     <div className="trade-history-meta">{recordingSince ? `服务器记录始于 ${new Date(recordingSince * 1000).toLocaleString('zh-CN')}` : '服务器正在积累逐笔成交记录'} · 色条长度按成交量平方根缩放{source === 'hyperliquid' && symbol === 'BTC' ? ' · BTC 示例仅保留最近 24 小时、最多 10 万笔' : ''}</div>
     {error && <p className="full-book-status" role="alert">{error}</p>}
     {loading && <p className="full-book-status" role="status">{rows.length ? '正在刷新成交记录…' : '正在查询成交记录…'}</p>}
-    {(!loading || rows.length > 0) && <><RecentTrades trades={rows} symbol={symbol} quote={quote} showDate />{nextCursor && <button type="button" className="trade-more-button" disabled={loading || moreLoading} onClick={() => void loadMore()}>{moreLoading ? '加载中…' : '加载更多'}</button>}</>}
+    {(!loading || rows.length > 0) && <><RecentTrades trades={rows} symbol={symbol} quote={quote} showDate />{nextCursor && <button type="button" className="trade-more-button" ref={loadMoreButton} disabled={loading || moreLoading} onClick={() => void loadMore()}>{moreLoading ? '加载中…' : '加载更多'}</button>}</>}
   </section>;
 }
 
