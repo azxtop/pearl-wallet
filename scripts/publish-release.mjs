@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Pearl Wallet 0.2.32 预发布版\n\n- “查看更多成交”页面支持顶部下拉刷新。\n- 刷新期间保留已有成交记录，新结果返回后更新列表；原有刷新按钮仍可使用。\n\nSHA-256: ${hash}`,
+      body: `Pearl Wallet 0.2.33 预发布版\n\n- 优化“查看更多成交”的下拉刷新手势，连续操作更流畅。\n- 滑至成交记录底部时自动加载更多；原有“加载更多”按钮仍可手动使用。\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);
