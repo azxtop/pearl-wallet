@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Pearl Wallet ${version} 预发布版\n\n- SafeTrade K 线可显示个人买卖成交和买卖均价，并可分别开关。\n- 优化 K 线买卖标记的比例与显示。\n- 修正 Aster 完整盘口的来源标题。\n- 关闭普通页面的双指缩放，保留 K 线手势。\n\nSHA-256: ${hash}`,
+      body: `Pearl Wallet ${version} 预发布版\n\n- SafeTrade K 线个人成交可按全部、近 7/30/90 天或自定义日期筛选。\n- 买入和卖出汇总显示所选时段的数量与成交均价。\n- 修正 SafeTrade 24h 成交量与成交额的单位对应。\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);
