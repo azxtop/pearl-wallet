@@ -23,7 +23,7 @@ import { chartWindow } from "./lib/chart-window";
 import { displayLighterCandles } from "./lib/chart-candles";
 import { loadPublicMarketCache, loadWprlMarketCache, loadHyperliquidMarketCache, loadLighterMarketCache, loadAsterMarketCache, MARKET_INTERVALS, savePublicMarketCache, saveWprlMarketCache, saveHyperliquidMarketCache, saveLighterMarketCache, saveAsterMarketCache, type MarketInterval } from "./lib/market-cache";
 import { screenPrivacy } from "./lib/screen-privacy";
-import { groupPersonalTrades, summarizePersonalTrades } from "./lib/personal-chart";
+import { filterPersonalTrades, groupPersonalTrades, summarizePersonalTrades, type PersonalTradeRange } from "./lib/personal-chart";
 
 type Tab = "wallet" | "market" | "setting";
 type MarketSource = "safetrade" | "wprl" | "hyperliquid" | "lighter" | "aster";
@@ -38,6 +38,20 @@ function loadPersonalChartVisibility(): PersonalChartVisibility {
     const saved = JSON.parse(localStorage.getItem(PERSONAL_CHART_KEY) || "null");
     if (!saved || typeof saved !== "object") return defaults;
     return Object.fromEntries((Object.keys(defaults) as PersonalChartLayer[]).map((layer) => [layer, typeof saved[layer] === "boolean" ? saved[layer] : defaults[layer]])) as PersonalChartVisibility;
+  } catch { return defaults; }
+}
+const PERSONAL_CHART_RANGE_KEY = "pearl-chart-personal-range-v1";
+function chartDate(daysAgo: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+function loadPersonalChartRange(): PersonalTradeRange {
+  const defaults: PersonalTradeRange = { period: "all", from: chartDate(30), to: chartDate(0) };
+  try {
+    const saved = JSON.parse(localStorage.getItem(PERSONAL_CHART_RANGE_KEY) || "null");
+    if (!saved || !["all", "7d", "30d", "90d", "custom"].includes(saved.period)) return defaults;
+    return { period: saved.period, from: /^\d{4}-\d{2}-\d{2}$/.test(saved.from) ? saved.from : defaults.from, to: /^\d{4}-\d{2}-\d{2}$/.test(saved.to) ? saved.to : defaults.to };
   } catch { return defaults; }
 }
 type WalletPage = "home" | "send" | "receive" | "history";
@@ -91,9 +105,15 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
   const [selectedTime, setSelectedTime] = useState<number | null>(null);
   const [selectedY, setSelectedY] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [personalRange, setPersonalRange] = useState(loadPersonalChartRange);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ x: number; y: number; offset: number; count: number; distance: number; dismissOnTap: boolean; mode: "pending" | "pan" | "inspect" | "pinch"; timer: ReturnType<typeof setTimeout> | null } | null>(null);
-  const personalGroups = useMemo(() => groupPersonalTrades(personal?.history?.trades ?? [], interval), [personal?.history?.trades, interval]);
+  const filteredPersonalTrades = useMemo(() => filterPersonalTrades(personal?.history?.trades ?? [], personalRange), [personal?.history?.trades, personalRange]);
+  const personalGroups = useMemo(() => groupPersonalTrades(filteredPersonalTrades, interval), [filteredPersonalTrades, interval]);
+  function updatePersonalRange(range: PersonalTradeRange) {
+    setPersonalRange(range);
+    localStorage.setItem(PERSONAL_CHART_RANGE_KEY, JSON.stringify(range));
+  }
   const viewport = chartWindow(candles.length, visibleCount, offset);
   const data = candles.slice(viewport.firstIndex, viewport.endIndex);
   useEffect(() => {
@@ -118,8 +138,10 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
   const span = Math.max(high - low, high * 0.003);
   const y = (value: number) => 240 - ((value - low) / span) * 210;
   const averageY = (value: number | null | undefined, enabled: boolean | undefined) => enabled && value != null && value >= low && value <= high ? y(value) : null;
-  const buyAverage = personal?.history?.averages.buy ?? null;
-  const sellAverage = personal?.history?.averages.sell ?? null;
+  const buySummary = summarizePersonalTrades(filteredPersonalTrades.filter((trade) => trade.side === "buy"));
+  const sellSummary = summarizePersonalTrades(filteredPersonalTrades.filter((trade) => trade.side === "sell"));
+  const buyAverage = buySummary?.price ?? null;
+  const sellAverage = sellSummary?.price ?? null;
   const buyAverageY = averageY(buyAverage, personal?.visibility.buyAverage);
   const sellAverageY = averageY(sellAverage, personal?.visibility.sellAverage);
   const priceAtY = (position: number) => low + (240 - position) / 210 * span;
@@ -220,12 +242,18 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
     <div className="chart-toolbar"><div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div><div className="chart-toolbar-actions">
       {status && <small>{status}</small>}{offset !== 0 && <button className="chart-latest" onClick={() => setOffset(0)}>最新</button>}
       {personal && <div className="chart-settings"><button type="button" className="chart-settings-trigger" aria-label="K 线设置" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((open) => !open)}><Icon name="chartOptions" size={23} /></button>
-        {settingsOpen && <div className="chart-settings-menu"><strong>个人成交显示</strong>{([
-          ["buyOrders", "显示买单"], ["sellOrders", "显示卖单"], ["buyAverage", "显示买入均价"], ["sellAverage", "显示卖出均价"],
-        ] as [PersonalChartLayer, string][]).map(([layer, label]) => <button type="button" role="switch" aria-checked={personal.visibility[layer]} key={layer} onClick={() => personal.onToggle(layer)}><span>{label}</span><span className={`chart-switch ${personal.visibility[layer] ? "active" : ""}`} /></button>)}<small>{!personal.connected ? "先连接 SafeTrade 只读 API" : personal.error || personal.history?.error || (personal.history?.syncing ? "正在同步个人成交…" : `已记录 ${personal.history?.trades.length ?? 0} 笔个人成交`)}</small></div>}
+        {settingsOpen && <div className="chart-settings-menu">
+          <strong>个人成交显示</strong>
+          <div className="chart-range-heading">时间范围</div>
+          <div className="chart-range-presets" role="group" aria-label="个人成交时间范围">{([
+            ["all", "全部"], ["7d", "7 天"], ["30d", "30 天"], ["90d", "90 天"], ["custom", "自定义"],
+          ] as [PersonalTradeRange["period"], string][]).map(([period, label]) => <button type="button" className={personalRange.period === period ? "active" : ""} aria-pressed={personalRange.period === period} key={period} onClick={() => updatePersonalRange({ ...personalRange, period })}>{label}</button>)}</div>
+          {personalRange.period === "custom" && <div className="chart-range-dates"><label>开始<input type="date" value={personalRange.from} onChange={(event) => { const from = event.target.value; if (from) updatePersonalRange({ ...personalRange, from, to: from > personalRange.to ? from : personalRange.to }); }} /></label><label>结束<input type="date" value={personalRange.to} onChange={(event) => { const to = event.target.value; if (to) updatePersonalRange({ ...personalRange, from: to < personalRange.from ? to : personalRange.from, to }); }} /></label></div>}{([
+          ["buyOrders", "显示买单"], ["sellOrders", "显示卖单"], ["buyAverage", "显示买入数量/均价"], ["sellAverage", "显示卖出数量/均价"],
+        ] as [PersonalChartLayer, string][]).map(([layer, label]) => <button type="button" role="switch" aria-checked={personal.visibility[layer]} key={layer} onClick={() => personal.onToggle(layer)}><span>{label}</span><span className={`chart-switch ${personal.visibility[layer] ? "active" : ""}`} /></button>)}<small>{!personal.connected ? "先连接 SafeTrade 只读 API" : personal.error || personal.history?.error || (personal.history?.syncing ? "正在同步个人成交…" : `该时段 ${filteredPersonalTrades.length} 笔 · 已同步 ${personal.history?.trades.length ?? 0} 笔`)}</small></div>}
       </div>}
     </div></div>
-    {personal && (personal.visibility.buyAverage && buyAverage !== null || personal.visibility.sellAverage && sellAverage !== null) && <div className="chart-average-summary">{personal.visibility.buyAverage && buyAverage !== null && <span className="buy">买入均价 {marketNumber(buyAverage, 8)}</span>}{personal.visibility.sellAverage && sellAverage !== null && <span className="sell">卖出均价 {marketNumber(sellAverage, 8)}</span>}</div>}
+    {personal && ((personal.visibility.buyAverage && buySummary) || (personal.visibility.sellAverage && sellSummary)) && <div className="chart-average-summary">{personal.visibility.buyAverage && buySummary && <span className="buy">买入 {marketNumber(buySummary.amount, 8)} @ {marketNumber(buySummary.price, 8)}</span>}{personal.visibility.sellAverage && sellSummary && <span className="sell">卖出 {marketNumber(sellSummary.amount, 8)} @ {marketNumber(sellSummary.price, 8)}</span>}</div>}
     <div className="chart-stage"><svg viewBox="0 0 640 355" preserveAspectRatio="none" role="img" aria-label={`${symbol} K 线`} onPointerDown={beginPointer} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer} onWheel={(event) => { if (event.ctrlKey) { setVisibleCount((count) => Math.max(20, Math.min(200, count + (event.deltaY > 0 ? 10 : -10)))); } }}>
       {[0, 1, 2, 3, 4].map((line) => <line key={line} x1="0" x2="640" y1={30 + line * 52} y2={30 + line * 52} className="chart-grid" />)}
       {gridTimes.map(({ x }) => <line key={x} x1={x} x2={x} y1="0" y2="355" className="chart-grid" />)}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupPersonalTrades, summarizePersonalTrades } from './personal-chart';
+import { filterPersonalTrades, groupPersonalTrades, summarizePersonalTrades } from './personal-chart';
 import type { PersonalTrade } from './safetrade';
 
 describe('personal trade chart labels', () => {
@@ -15,5 +15,18 @@ describe('personal trade chart labels', () => {
     expect(summarizePersonalTrades(minutes.get(3_600)!.buy)).toEqual({ amount: 4, price: 2.75, count: 2 });
     const hours = groupPersonalTrades(trades, '1h');
     expect(hours.get(3_600)?.sell).toHaveLength(1);
+  });
+  it('applies the same selected time range to fills and weighted averages', () => {
+    const day = (value: number) => Math.floor(new Date(2026, 4, value, 12).getTime() / 1000);
+    const trades: PersonalTrade[] = [
+      { id: 'old', time: day(24), side: 'buy', price: 1, amount: 100 },
+      { id: 'buy', time: day(25), side: 'buy', price: 2, amount: 3 },
+      { id: 'sell', time: day(26), side: 'sell', price: 4, amount: 1 },
+      { id: 'later', time: day(27), side: 'buy', price: 9, amount: 100 },
+    ];
+    const chosen = filterPersonalTrades(trades, { period: 'custom', from: '2026-05-25', to: '2026-05-26' });
+    expect(chosen.map((trade) => trade.id)).toEqual(['buy', 'sell']);
+    expect(summarizePersonalTrades(chosen.filter((trade) => trade.side === 'buy'))?.price).toBe(2);
+    expect(filterPersonalTrades(trades, { period: '7d', from: '', to: '' }, day(27) * 1000)).toHaveLength(4);
   });
 });
