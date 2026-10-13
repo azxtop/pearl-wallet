@@ -314,9 +314,10 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .chart-toolbar-actions small { color: #929a9b; font-size: 10px; }
 .chart-latest { border: 1px solid #e9eceb; border-radius: 6px; background: #fff; color: #495150; padding: 5px 8px; font-size: 11px; }
 .chart-settings { position: relative; }
-.chart-settings-trigger { width: 28px; height: 28px; border: 0; background: transparent; display: grid; place-items: center; padding: 0; color: #626b68; }
-.chart-settings-menu { position: absolute; top: 33px; right: 0; z-index: 6; width: 224px; padding: 10px; border: 1px solid #e4e9e6; border-radius: 10px; background: #fff; box-shadow: 0 8px 24px #15241b24; }
-.chart-settings-menu button { width: 100%; min-height: 34px; padding: 0; border: 0; background: transparent; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: #1d2823; }
+.chart-settings-trigger { width: 32px; height: 30px; border: 0; background: transparent; display: grid; place-items: center; padding: 0; color: #202827; }
+.chart-settings-menu { position: absolute; top: 34px; right: 0; z-index: 6; width: 222px; padding: 10px 12px; border: 1px solid #e4e9e6; border-radius: 10px; background: #fff; box-shadow: 0 8px 24px #15241b24; }
+.chart-settings-menu > strong { display: block; padding: 3px 0 7px; color: #1d2823; font-size: 12px; }
+.chart-settings-menu button { width: 100%; min-height: 36px; padding: 0; border: 0; background: transparent; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; color: #1d2823; }
 .chart-settings-menu small { display: block; margin-top: 6px; line-height: 1.45; color: #84908a; }
 .chart-average-summary { display: flex; flex-wrap: wrap; gap: 3px 12px; margin: 0 18px 2px; font-size: 10px; font-variant-numeric: tabular-nums; }
 .chart-average-summary .buy { color: var(--trade-green); }.chart-average-summary .sell { color: var(--trade-red); }
@@ -332,8 +333,8 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .chart-average-line.buy { stroke: var(--trade-green); }.chart-average-line.sell { stroke: var(--trade-red); }
 .chart-average-price { position: absolute; left: 0; z-index: 2; transform: translateY(-50%); padding: 2px 4px; border-radius: 3px; background: #fff; font-size: 9px; line-height: 1.2; pointer-events: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .chart-average-price.buy { border: 1px solid var(--trade-green); color: var(--trade-green); }.chart-average-price.sell { border: 1px solid var(--trade-red); color: var(--trade-red); }
-.personal-trade-marker { pointer-events: none; }.personal-trade-marker.buy rect { fill: var(--trade-green); }.personal-trade-marker.sell rect { fill: var(--trade-red); }
-.personal-trade-marker text { fill: #fff; stroke: none; font-size: 10px; font-weight: 700; }
+.personal-trade-marker { pointer-events: none; }.personal-trade-marker.buy rect, .personal-trade-marker.buy path { fill: var(--trade-green); }.personal-trade-marker.sell rect, .personal-trade-marker.sell path { fill: var(--trade-red); }
+.personal-trade-marker text { fill: #fff; stroke: none; font-size: 13px; font-weight: 700; }
 .chart-current-price { position: absolute; right: 3px; z-index: 3; transform: translateY(-50%); padding: 3px 5px; border-radius: 2px; color: #fff; font-size: 11px; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; }
 .chart-current-price.up { background: var(--trade-green); }.chart-current-price.down { background: var(--trade-red); }
 .chart-inspect-price { position: absolute; right: 3px; z-index: 4; transform: translateY(-50%); padding: 3px 5px; border-radius: 2px; background: #171c1a; color: #fff; font-size: 11px; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; }

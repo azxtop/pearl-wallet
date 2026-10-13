@@ -27,6 +27,19 @@ import { groupPersonalTrades, summarizePersonalTrades } from "./lib/personal-cha
 
 type Tab = "wallet" | "market" | "setting";
 type MarketSource = "safetrade" | "wprl" | "hyperliquid" | "lighter" | "aster";
+const MARKET_VENUE_NAMES: Record<TradeSource, string> = { safetrade: "SafeTrade", hyperliquid: "Hyperliquid", lighter: "Lighter", aster: "Aster" };
+type PersonalChartLayer = "buyOrders" | "sellOrders" | "buyAverage" | "sellAverage";
+type PersonalChartVisibility = Record<PersonalChartLayer, boolean>;
+const PERSONAL_CHART_KEY = "pearl-chart-personal-layers-v1";
+function loadPersonalChartVisibility(): PersonalChartVisibility {
+  const legacy = localStorage.getItem("pearl-chart-personal-trades-v1") === "true";
+  const defaults = { buyOrders: legacy, sellOrders: legacy, buyAverage: legacy, sellAverage: legacy };
+  try {
+    const saved = JSON.parse(localStorage.getItem(PERSONAL_CHART_KEY) || "null");
+    if (!saved || typeof saved !== "object") return defaults;
+    return Object.fromEntries((Object.keys(defaults) as PersonalChartLayer[]).map((layer) => [layer, typeof saved[layer] === "boolean" ? saved[layer] : defaults[layer]])) as PersonalChartVisibility;
+  } catch { return defaults; }
+}
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
 const APP_VERSION = "0.2.33";
@@ -48,6 +61,7 @@ function Icon({ name, size = 24 }: { name: string; size?: number }) {
     wallet: <><rect x="3" y="6" width="18" height="15" rx="3" /><path d="M3 10h18M6 6V4a1 1 0 0 1 1-1h11" /><circle cx="17" cy="15" r="1" /></>,
     chart: <><path d="M3 19h18M4 15l5-5 4 3 7-8" /><path d="M16 5h4v4" /></>,
     setting: <><circle cx="12" cy="12" r="3" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4m0-14.2-1.4 1.4M6.3 17.7l-1.4 1.4" /></>,
+    chartOptions: <><path d="M3 5h18M3 10h10M3 19h18" /><path d="m17 9 3 2v3l-3 2-3-2v-3l3-2Z" /><circle cx="17" cy="12.5" r=".7" fill="currentColor" stroke="none" /></>,
     back: <path d="m15 18-6-6 6-6" />,
     copy: <><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>,
     refresh: <><path d="M20 7v5h-5M4 17v-5h5" /><path d="M5.5 9A7 7 0 0 1 18 7l2 5M4 12l2 5a7 7 0 0 0 12.5-2" /></>,
@@ -69,7 +83,7 @@ function Field({ label, value, onChange, type = "text", placeholder, autoComplet
   return <label className="field"><span>{label}</span><input value={value} onChange={(event) => onChange(event.target.value)} type={type} placeholder={placeholder} autoComplete={autoComplete} /></label>;
 }
 
-type PersonalChartSettings = { enabled: boolean; connected: boolean; history: PersonalTradeHistory | null; error: string; onToggle: (enabled: boolean) => void };
+type PersonalChartSettings = { visibility: PersonalChartVisibility; connected: boolean; history: PersonalTradeHistory | null; error: string; onToggle: (layer: PersonalChartLayer) => void };
 
 function CandleChart({ candles, currentPrice, loading = false, status = "", symbol = "PRL", interval = "1m", personal }: { candles: MarketData["candles"]; currentPrice?: number | null; loading?: boolean; status?: string; symbol?: string; interval?: Interval; personal?: PersonalChartSettings }) {
   const [visibleCount, setVisibleCount] = useState(80);
@@ -79,7 +93,7 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
   const [settingsOpen, setSettingsOpen] = useState(false);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<{ x: number; y: number; offset: number; count: number; distance: number; dismissOnTap: boolean; mode: "pending" | "pan" | "inspect" | "pinch"; timer: ReturnType<typeof setTimeout> | null } | null>(null);
-  const personalGroups = useMemo(() => groupPersonalTrades(personal?.enabled ? personal.history?.trades ?? [] : [], interval), [personal?.enabled, personal?.history?.trades, interval]);
+  const personalGroups = useMemo(() => groupPersonalTrades(personal?.history?.trades ?? [], interval), [personal?.history?.trades, interval]);
   const viewport = chartWindow(candles.length, visibleCount, offset);
   const data = candles.slice(viewport.firstIndex, viewport.endIndex);
   useEffect(() => {
@@ -103,11 +117,11 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
   const low = Math.min(...real.map((item) => item.low), ...(latestPrice === undefined ? [] : [latestPrice]));
   const span = Math.max(high - low, high * 0.003);
   const y = (value: number) => 240 - ((value - low) / span) * 210;
-  const averageY = (value: number | null | undefined) => personal?.enabled && value != null && value >= low && value <= high ? y(value) : null;
+  const averageY = (value: number | null | undefined, enabled: boolean | undefined) => enabled && value != null && value >= low && value <= high ? y(value) : null;
   const buyAverage = personal?.history?.averages.buy ?? null;
   const sellAverage = personal?.history?.averages.sell ?? null;
-  const buyAverageY = averageY(buyAverage);
-  const sellAverageY = averageY(sellAverage);
+  const buyAverageY = averageY(buyAverage, personal?.visibility.buyAverage);
+  const sellAverageY = averageY(sellAverage, personal?.visibility.sellAverage);
   const priceAtY = (position: number) => low + (240 - position) / 210 * span;
   const priceDigits = Math.max(2, Math.min(8, Math.ceil(-Math.log10(span / 210))));
   const latestY = latestPrice === undefined ? null : y(latestPrice);
@@ -203,8 +217,15 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
     gesture.current = null;
   }
   return <div className="chart-shell">
-    <div className="chart-toolbar"><div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div><div className="chart-toolbar-actions">{status && <small>{status}</small>}{offset !== 0 && <button className="chart-latest" onClick={() => setOffset(0)}>最新</button>}{personal && <div className="chart-settings"><button type="button" className="chart-settings-trigger" aria-label="K 线设置" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((open) => !open)}><Icon name="setting" size={18} /></button>{settingsOpen && <div className="chart-settings-menu"><button type="button" role="switch" aria-checked={personal.enabled} onClick={() => personal.onToggle(!personal.enabled)}><span>显示我的买卖</span><span className={`chart-switch ${personal.enabled ? "active" : ""}`} /></button><small>{!personal.connected ? "先连接 SafeTrade 只读 API" : personal.error || personal.history?.error || (personal.enabled && personal.history?.syncing ? "正在同步个人成交…" : personal.enabled ? `已记录 ${personal.history?.trades.length ?? 0} 笔个人成交` : "在 K 线上标记个人成交及均价")}</small></div>}</div>}</div></div>
-    {personal?.enabled && (buyAverage !== null || sellAverage !== null) && <div className="chart-average-summary">{buyAverage !== null && <span className="buy">买入均价 {marketNumber(buyAverage, 8)}</span>}{sellAverage !== null && <span className="sell">卖出均价 {marketNumber(sellAverage, 8)}</span>}</div>}
+    <div className="chart-toolbar"><div className="ma-legend"><span>MA(7)</span><span>MA(25)</span><span>MA(99)</span></div><div className="chart-toolbar-actions">
+      {status && <small>{status}</small>}{offset !== 0 && <button className="chart-latest" onClick={() => setOffset(0)}>最新</button>}
+      {personal && <div className="chart-settings"><button type="button" className="chart-settings-trigger" aria-label="K 线设置" aria-expanded={settingsOpen} onClick={() => setSettingsOpen((open) => !open)}><Icon name="chartOptions" size={23} /></button>
+        {settingsOpen && <div className="chart-settings-menu"><strong>个人成交显示</strong>{([
+          ["buyOrders", "显示买单"], ["sellOrders", "显示卖单"], ["buyAverage", "显示买入均价"], ["sellAverage", "显示卖出均价"],
+        ] as [PersonalChartLayer, string][]).map(([layer, label]) => <button type="button" role="switch" aria-checked={personal.visibility[layer]} key={layer} onClick={() => personal.onToggle(layer)}><span>{label}</span><span className={`chart-switch ${personal.visibility[layer] ? "active" : ""}`} /></button>)}<small>{!personal.connected ? "先连接 SafeTrade 只读 API" : personal.error || personal.history?.error || (personal.history?.syncing ? "正在同步个人成交…" : `已记录 ${personal.history?.trades.length ?? 0} 笔个人成交`)}</small></div>}
+      </div>}
+    </div></div>
+    {personal && (personal.visibility.buyAverage && buyAverage !== null || personal.visibility.sellAverage && sellAverage !== null) && <div className="chart-average-summary">{personal.visibility.buyAverage && buyAverage !== null && <span className="buy">买入均价 {marketNumber(buyAverage, 8)}</span>}{personal.visibility.sellAverage && sellAverage !== null && <span className="sell">卖出均价 {marketNumber(sellAverage, 8)}</span>}</div>}
     <div className="chart-stage"><svg viewBox="0 0 640 355" preserveAspectRatio="none" role="img" aria-label={`${symbol} K 线`} onPointerDown={beginPointer} onPointerMove={movePointer} onPointerUp={endPointer} onPointerCancel={cancelPointer} onWheel={(event) => { if (event.ctrlKey) { setVisibleCount((count) => Math.max(20, Math.min(200, count + (event.deltaY > 0 ? 10 : -10)))); } }}>
       {[0, 1, 2, 3, 4].map((line) => <line key={line} x1="0" x2="640" y1={30 + line * 52} y2={30 + line * 52} className="chart-grid" />)}
       {gridTimes.map(({ x }) => <line key={x} x1={x} x2={x} y1="0" y2="355" className="chart-grid" />)}
@@ -221,13 +242,13 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
       <path d={maPath(7)} className="ma-line ma7" /><path d={maPath(25)} className="ma-line ma25" /><path d={maPath(99)} className="ma-line ma99" />
       {buyAverageY !== null && <line x1="0" x2="640" y1={buyAverageY} y2={buyAverageY} className="chart-average-line buy" />}
       {sellAverageY !== null && <line x1="0" x2="640" y1={sellAverageY} y2={sellAverageY} className="chart-average-line sell" />}
-      {personal?.enabled && data.flatMap((item, index) => {
+      {personal && data.flatMap((item, index) => {
         const group = personalGroups.get(item.time);
         if (!group) return [];
         const x = (viewport.leftSlots + index + .5) * width;
-        return (["buy", "sell"] as const).filter((side) => group[side].length).map((side) => {
-          const position = side === "buy" ? Math.min(254, y(item.low) + 17) : Math.max(13, y(item.high) - 17);
-          return <g key={`${item.time}-${side}`} className={`personal-trade-marker ${side}`} transform={`translate(${x},${position})`}><rect x="-7" y="-7" width="14" height="14" rx="4" /><text textAnchor="middle" dy=".35em">{side === "buy" ? "B" : "S"}</text></g>;
+        return (["buy", "sell"] as const).filter((side) => group[side].length && personal.visibility[side === "buy" ? "buyOrders" : "sellOrders"]).map((side) => {
+          const position = side === "buy" ? Math.min(251, y(item.low) + 25) : Math.max(17, y(item.high) - 25);
+          return <g key={`${item.time}-${side}`} className={`personal-trade-marker ${side}`} transform={`translate(${x},${position})`}><path d={side === "buy" ? "M-5 -10 0 -16 5 -10Z" : "M-5 10 0 16 5 10Z"} /><rect x="-10" y="-10" width="20" height="20" rx="5" /><text textAnchor="middle" dy=".35em">{side === "buy" ? "B" : "S"}</text></g>;
         });
       })}
       {latestY !== null && <line x1="0" x2="640" y1={latestY} y2={latestY} className={`chart-current-line ${latestUp ? "up" : "down"}`} />}
@@ -240,7 +261,7 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
     {latestY !== null && (!selected || Math.abs((selectedY ?? y(selected.close)) - latestY) > 17) && <span className={`chart-current-price ${latestUp ? "up" : "down"}`} style={{ top: `${latestY / 355 * 100}%` }} aria-label={`当前价格 ${marketNumber(latestPrice, 8)} USDT`}>{marketNumber(latestPrice, 8)}</span>}
     {selected && <span className="chart-inspect-price" style={{ top: `${(selectedY ?? y(selected.close)) / 355 * 100}%` }} aria-label={`指针价格 ${priceAtY(selectedY ?? y(selected.close)).toFixed(priceDigits)} USDT`}>{priceAtY(selectedY ?? y(selected.close)).toFixed(priceDigits)}</span>}
     {gridTimes.filter(({ candle }) => candle).map(({ x, candle }) => <span key={x} className="chart-time-label" style={{ left: `${x / 640 * 100}%` }}>{timeLabel(candle!.time)}</span>)}
-    {selected && <div className={`chart-detail-popup ${selectedX > 320 ? "on-left" : "on-right"}`}><div>时间 <strong>{timeLabel(selected.time)}</strong></div><div>开 <strong>{marketNumber(selected.open, 8)}</strong></div><div>高 <strong>{marketNumber(selected.high, 8)}</strong></div><div>低 <strong>{marketNumber(selected.low, 8)}</strong></div><div>收 <strong>{marketNumber(selected.close, 8)}</strong></div><div>涨跌 <strong className={selected.close >= selected.open ? "positive" : "negative"}>{marketNumber(selected.close - selected.open, 8)}</strong></div><div>量 <strong>{compactMarketNumber(selected.volume)} {symbol}</strong></div>{personal?.enabled && selectedPersonal && (["buy", "sell"] as const).map((side) => { const summary = summarizePersonalTrades(selectedPersonal[side]); return summary && <div className={`chart-personal-detail ${side}`} key={side}><span>{side === "buy" ? "买入" : "卖出"}{summary.count > 1 ? ` · ${summary.count} 笔` : ""}</span><strong>{marketNumber(summary.amount, 8)} @ {marketNumber(summary.price, 8)}</strong></div>; })}</div>}
+    {selected && <div className={`chart-detail-popup ${selectedX > 320 ? "on-left" : "on-right"}`}><div>时间 <strong>{timeLabel(selected.time)}</strong></div><div>开 <strong>{marketNumber(selected.open, 8)}</strong></div><div>高 <strong>{marketNumber(selected.high, 8)}</strong></div><div>低 <strong>{marketNumber(selected.low, 8)}</strong></div><div>收 <strong>{marketNumber(selected.close, 8)}</strong></div><div>涨跌 <strong className={selected.close >= selected.open ? "positive" : "negative"}>{marketNumber(selected.close - selected.open, 8)}</strong></div><div>量 <strong>{compactMarketNumber(selected.volume)} {symbol}</strong></div>{personal && selectedPersonal && (["buy", "sell"] as const).map((side) => { if (!personal.visibility[side === "buy" ? "buyOrders" : "sellOrders"]) return null; const summary = summarizePersonalTrades(selectedPersonal[side]); return summary && <div className={`chart-personal-detail ${side}`} key={side}><span>{side === "buy" ? "买入" : "卖出"}{summary.count > 1 ? ` · ${summary.count} 笔` : ""}</span><strong>{marketNumber(summary.amount, 8)} @ {marketNumber(summary.price, 8)}</strong></div>; })}</div>}
     </div>
   </div>;
 }
@@ -337,7 +358,7 @@ function FullOrderBook({ source, symbol, quote, onBack }: { source: TradeSource;
   }, [source]);
   const depth = snapshot ? aggregateDepth(snapshot.depth, step) : undefined;
   const steps = source === 'hyperliquid' ? [{ value: 0, label: '原始' }, { value: 1, label: '1' }, { value: 10, label: '10' }, { value: 100, label: '100' }] : [{ value: 0, label: '原始' }, { value: 0.001, label: '0.001' }, { value: 0.01, label: '0.01' }, { value: 0.1, label: '0.1' }];
-  const venue = source === 'hyperliquid' ? 'Hyperliquid' : source === 'lighter' ? 'Lighter' : 'SafeTrade';
+  const venue = MARKET_VENUE_NAMES[source];
   return <section className="trade-page full-book-page">
     <div className="full-book-header"><button type="button" aria-label="返回 Market" onClick={onBack}><Icon name="back" size={22} /></button><div><h1>完整盘口</h1><small>{venue} · {symbol}/{quote}</small></div></div>
     <div className="full-book-steps" aria-label="价格合并档位"><span>价格档位</span>{steps.map((option) => <button type="button" key={option.label} className={step === option.value ? "active" : ""} onClick={() => setStep(option.value)}>{option.label}</button>)}</div>
@@ -457,7 +478,7 @@ function TradeHistoryPage({ source, symbol, quote, onBack }: { source: TradeSour
     }
   };
   const endPull = () => { const refresh = pullDistanceRef.current >= 48; resetPull(); if (refresh) refreshHistory(); };
-  const venue = source === 'hyperliquid' ? 'Hyperliquid' : source === 'lighter' ? 'Lighter' : source === 'aster' ? 'Aster' : 'SafeTrade';
+  const venue = MARKET_VENUE_NAMES[source];
   return <section className="trade-page full-book-page trade-history-page" onTouchStart={startPull} onTouchMove={movePull} onTouchEnd={endPull} onTouchCancel={resetPull}>
     <div className="full-book-header"><button type="button" aria-label="返回 Market" onClick={onBack}><Icon name="back" size={22} /></button><div><h1>成交记录</h1><small>{venue} · {symbol}/{quote}</small></div></div>
     <div className="trade-history-pull-indicator" ref={pullIndicator} aria-hidden="true">下拉刷新</div>
@@ -548,7 +569,8 @@ export default function App() {
   const [account, setAccount] = useState<AccountData | null>(null);
   const [accountError, setAccountError] = useState("");
   const [connectionToken, setConnectionToken] = useState(savedConnectionToken);
-  const [showPersonalTrades, setShowPersonalTrades] = useState(() => localStorage.getItem("pearl-chart-personal-trades-v1") === "true");
+  const [personalChartVisibility, setPersonalChartVisibility] = useState(loadPersonalChartVisibility);
+  const showPersonalTrades = Object.values(personalChartVisibility).some(Boolean);
   const [personalTradeHistory, setPersonalTradeHistory] = useState<PersonalTradeHistory | null>(null);
   const [personalTradeError, setPersonalTradeError] = useState("");
   const [safeKey, setSafeKey] = useState("");
@@ -973,9 +995,12 @@ export default function App() {
     }
   }, [connectionToken]);
 
-  const togglePersonalTrades = useCallback((enabled: boolean) => {
-    setShowPersonalTrades(enabled);
-    localStorage.setItem("pearl-chart-personal-trades-v1", String(enabled));
+  const togglePersonalTrades = useCallback((layer: PersonalChartLayer) => {
+    setPersonalChartVisibility((current) => {
+      const next = { ...current, [layer]: !current[layer] };
+      localStorage.setItem(PERSONAL_CHART_KEY, JSON.stringify(next));
+      return next;
+    });
   }, []);
 
   useEffect(() => { setPersonalTradeHistory(null); setPersonalTradeError(""); }, [connectionToken]);
@@ -2137,7 +2162,7 @@ export default function App() {
         <div className="pair-head"><button type="button" className="market-pair-picker" onClick={() => { setSourcePickerOpen(true); void refreshOverview(); void refreshWprlOverview(); void refreshHyperliquidOverview(); void refreshLighterOverview(); void refreshAsterOverview(); }} aria-label="选择行情来源"><h1>{activeExchange?.pair ?? `${activeSymbol}/${activeQuote}`} <Icon name="chevron" size={18} /></h1><small>{isAster ? "Aster 永续 · 只读行情" : isLighter ? "Lighter 永续 · 只读行情" : isHyperliquid ? `Hyperliquid 永续 · ${hyperliquidOverview?.contract?.example === false ? "只读行情" : "BTC 示例，非 PRL"}` : isWprl ? "以太坊 · Uniswap V3" : "SafeTrade 现货"}</small></button><button className="market-refresh" aria-label="刷新行情" onClick={() => { if (isAster) { void refreshAsterOverview(); void refreshAsterCandles(interval); } else if (isLighter) { void refreshLighterOverview(); void refreshLighterCandles(interval); } else if (isHyperliquid) { void refreshHyperliquidOverview(); void refreshHyperliquidCandles(interval); } else if (isWprl) { void refreshWprlOverview(); void refreshWprlCandles(interval); } else refreshExchange(); }}><Icon name="refresh" size={19} /></button></div>
         <div className="market-summary"><div className="market-last"><strong className={(activeExchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{marketNumber(activeExchange?.price, isHyperliquid ? 2 : isLighter ? 4 : 8)}</strong><span>{activeQuote} <em className={(activeExchange?.stats24h?.changePercent ?? 0) >= 0 ? "positive" : "negative"}>{activeExchange?.stats24h?.changePercent == null ? "" : `${activeExchange.stats24h.changePercent >= 0 ? "+" : ""}${activeExchange.stats24h.changePercent.toFixed(2)}%`}</em></span></div><div className="market-stats"><div><span>{isPerp ? "标记价格" : "24h 最高"}</span><strong>{marketNumber(isPerp ? perpOverview?.markPrice : activeExchange?.stats24h?.high, isHyperliquid ? 2 : isLighter ? 4 : 8)}</strong></div><div><span>{isPerp ? "预言机价格" : "24h 最低"}</span><strong>{marketNumber(isPerp ? perpOverview?.oraclePrice : activeExchange?.stats24h?.low, isHyperliquid ? 2 : isLighter ? 4 : 8)}</strong></div><div><span>{isPerp ? "持仓量" : isWprl ? "池流动性" : "24h 成交量"}</span><strong>{isPerp ? `${compactMarketNumber(perpOverview?.openInterest)} ${activeSymbol}` : isWprl ? `${compactMarketNumber(wprlOverview?.liquidityUsd)} USD` : `${compactMarketNumber(exchange?.stats24h?.volume)} PRL`}</strong></div><div><span>{isPerp ? "资金费率" : "24h 成交额"}</span><strong>{isPerp ? perpOverview?.funding == null ? "—" : `${(perpOverview.funding * 100).toFixed(4)}%` : `${compactMarketNumber(activeExchange?.stats24h?.turnover)} ${isWprl && wprlOverview?.statsSource !== "recorded" ? "USD" : "USDT"}`}</strong></div></div></div>
         <div className="intervals">{INTERVALS.map((option) => <button key={option.id} className={interval === option.id ? "active" : ""} onClick={() => setIntervalValue(option.id)}>{option.label}</button>)}</div>
-        <div className="chart-card"><CandleChart key={`${marketSource}:${interval}`} candles={activeCandles} currentPrice={activeExchange?.price} loading={isAster ? asterRefreshing : isLighter ? lighterRefreshing : isHyperliquid ? hyperliquidRefreshing : isWprl ? wprlRefreshing : marketRefreshing} status={activeSeries && Date.now() - activeSeries.updatedAt > (isPerp ? 90_000 : isWprl ? 45_000 : 15_000) ? `更新于 ${new Date(activeSeries.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""} symbol={activeSymbol} interval={interval} personal={marketSource === "safetrade" ? { enabled: showPersonalTrades, connected: !!connectionToken, history: personalTradeHistory, error: personalTradeError, onToggle: togglePersonalTrades } : undefined} /></div>
+        <div className="chart-card"><CandleChart key={`${marketSource}:${interval}`} candles={activeCandles} currentPrice={activeExchange?.price} loading={isAster ? asterRefreshing : isLighter ? lighterRefreshing : isHyperliquid ? hyperliquidRefreshing : isWprl ? wprlRefreshing : marketRefreshing} status={activeSeries && Date.now() - activeSeries.updatedAt > (isPerp ? 90_000 : isWprl ? 45_000 : 15_000) ? `更新于 ${new Date(activeSeries.updatedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : ""} symbol={activeSymbol} interval={interval} personal={marketSource === "safetrade" ? { visibility: personalChartVisibility, connected: !!connectionToken, history: personalTradeHistory, error: personalTradeError, onToggle: togglePersonalTrades } : undefined} /></div>
         {activeMarketError && <div className="inline-error">{activeMarketError}<button onClick={() => { if (isAster) { void refreshAsterOverview(); void refreshAsterCandles(interval); } else if (isLighter) { void refreshLighterOverview(); void refreshLighterCandles(interval); } else if (isHyperliquid) { void refreshHyperliquidOverview(); void refreshHyperliquidCandles(interval); } else if (isWprl) { void refreshWprlOverview(); void refreshWprlCandles(interval); } else refreshExchange(); }}>重试</button></div>}
         {activeExchange?.marketError && <div className="inline-error">{activeExchange.marketError}</div>}
 {isWprl ? <><div className="market-tabs market-tabs-static"><strong>链上成交</strong><a href="https://www.geckoterminal.com/eth/pools/0x89a67c6dee35db9815da2fb9191f0998a8b37c39" target="_blank" rel="noreferrer">查看交易池 ↗</a></div><RecentTrades trades={wprlExchange?.trades} symbol="WPRL" /><div className="wprl-source-note">{wprlSeries?.source === "provider" ? "历史 K 线来自 GeckoTerminal" : wprlSeries?.source === "mixed" ? "起点前 K 线为外部参考，此后持续记录" : "K 线由服务器持续记录"}{(wprlSeries?.recordingSince || wprlOverview?.recordingSince) ? ` · ${new Date((wprlSeries?.recordingSince || wprlOverview?.recordingSince)!).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 起` : ""}</div></> : <><div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button><button type="button" className="full-book-entry" onClick={marketDetails === "depth" ? openFullBook : openTradeHistory}>{marketDetails === "depth" ? "查看完整盘口 ›" : "查看更多成交 ›"}</button></div>{marketDetails === "depth" ? <OrderBook depth={activeExchange?.depth} symbol={activeSymbol} quote={activeQuote} /> : <RecentTrades trades={activeExchange?.trades} symbol={activeSymbol} quote={activeQuote} />}{isPerp && <div className="wprl-source-note">{perpTradeSample > 0 ? `高负载模式：最近成交抽样展示，跳过 ${perpTradeSample} 笔 · ` : ""}K 线由服务器持续记录{perpRecordingSince ? ` · ${new Date(perpRecordingSince! * 1000).toLocaleDateString("zh-CN")} 起` : ""}</div>}</>}
