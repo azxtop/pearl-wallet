@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Pearl Wallet 0.2.33 预发布版\n\n- 优化“查看更多成交”的下拉刷新手势，连续操作更流畅。\n- 滑至成交记录底部时自动加载更多；原有“加载更多”按钮仍可手动使用。\n\nSHA-256: ${hash}`,
+      body: `Pearl Wallet ${version} 预发布版\n\n- SafeTrade K 线可显示个人买卖成交和买卖均价，并可分别开关。\n- 优化 K 线买卖标记的比例与显示。\n- 修正 Aster 完整盘口的来源标题。\n- 关闭普通页面的双指缩放，保留 K 线手势。\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);
