@@ -20,8 +20,9 @@ export function normalizeTicker(raw) {
   return {
     price,
     stats24h: {
-      high: finite(raw.high), low: finite(raw.low), volume: finite(raw.volume),
-      turnover: finite(raw.amount), changePercent: finite(String(raw.price_change_percent ?? '').replace('%', '')),
+      // SafeTrade's `amount` is base-asset units; `volume` is quote-asset value.
+      high: finite(raw.high), low: finite(raw.low), volume: finite(raw.amount),
+      turnover: finite(raw.volume), changePercent: finite(String(raw.price_change_percent ?? '').replace('%', '')),
     },
   };
 }
