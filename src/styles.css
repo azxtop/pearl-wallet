@@ -333,8 +333,10 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .chart-average-line.buy { stroke: var(--trade-green); }.chart-average-line.sell { stroke: var(--trade-red); }
 .chart-average-price { position: absolute; left: 0; z-index: 2; transform: translateY(-50%); padding: 2px 4px; border-radius: 3px; background: #fff; font-size: 9px; line-height: 1.2; pointer-events: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .chart-average-price.buy { border: 1px solid var(--trade-green); color: var(--trade-green); }.chart-average-price.sell { border: 1px solid var(--trade-red); color: var(--trade-red); }
-.personal-trade-marker { pointer-events: none; }.personal-trade-marker.buy rect, .personal-trade-marker.buy path { fill: var(--trade-green); }.personal-trade-marker.sell rect, .personal-trade-marker.sell path { fill: var(--trade-red); }
-.personal-trade-marker text { fill: #fff; stroke: none; font-size: 13px; font-weight: 700; }
+.personal-trade-marker { position: absolute; z-index: 2; width: 16px; height: 16px; display: grid; place-items: center; transform: translate(-50%, -50%); border-radius: 4px; color: #fff; font-size: 11px; font-weight: 700; line-height: 1; font-family: Arial, sans-serif; pointer-events: none; }
+.personal-trade-marker.buy { background: var(--trade-green); }.personal-trade-marker.sell { background: var(--trade-red); }
+.personal-trade-marker::after { content: ''; position: absolute; left: 50%; transform: translateX(-50%); border-left: 4px solid transparent; border-right: 4px solid transparent; }
+.personal-trade-marker.buy::after { top: -4px; border-bottom: 5px solid var(--trade-green); }.personal-trade-marker.sell::after { bottom: -4px; border-top: 5px solid var(--trade-red); }
 .chart-current-price { position: absolute; right: 3px; z-index: 3; transform: translateY(-50%); padding: 3px 5px; border-radius: 2px; color: #fff; font-size: 11px; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; }
 .chart-current-price.up { background: var(--trade-green); }.chart-current-price.down { background: var(--trade-red); }
 .chart-inspect-price { position: absolute; right: 3px; z-index: 4; transform: translateY(-50%); padding: 3px 5px; border-radius: 2px; background: #171c1a; color: #fff; font-size: 11px; font-weight: 650; line-height: 1.15; font-variant-numeric: tabular-nums; pointer-events: none; white-space: nowrap; }

@@ -242,19 +242,19 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
       <path d={maPath(7)} className="ma-line ma7" /><path d={maPath(25)} className="ma-line ma25" /><path d={maPath(99)} className="ma-line ma99" />
       {buyAverageY !== null && <line x1="0" x2="640" y1={buyAverageY} y2={buyAverageY} className="chart-average-line buy" />}
       {sellAverageY !== null && <line x1="0" x2="640" y1={sellAverageY} y2={sellAverageY} className="chart-average-line sell" />}
-      {personal && data.flatMap((item, index) => {
-        const group = personalGroups.get(item.time);
-        if (!group) return [];
-        const x = (viewport.leftSlots + index + .5) * width;
-        return (["buy", "sell"] as const).filter((side) => group[side].length && personal.visibility[side === "buy" ? "buyOrders" : "sellOrders"]).map((side) => {
-          const position = side === "buy" ? Math.min(251, y(item.low) + 25) : Math.max(17, y(item.high) - 25);
-          return <g key={`${item.time}-${side}`} className={`personal-trade-marker ${side}`} transform={`translate(${x},${position})`}><path d={side === "buy" ? "M-5 -10 0 -16 5 -10Z" : "M-5 10 0 16 5 10Z"} /><rect x="-10" y="-10" width="20" height="20" rx="5" /><text textAnchor="middle" dy=".35em">{side === "buy" ? "B" : "S"}</text></g>;
-        });
-      })}
       {latestY !== null && <line x1="0" x2="640" y1={latestY} y2={latestY} className={`chart-current-line ${latestUp ? "up" : "down"}`} />}
       {selected && <g className="chart-crosshair"><line x1={selectedX} x2={selectedX} y1="0" y2="355" /><line x1="0" x2="640" y1={selectedY ?? y(selected.close)} y2={selectedY ?? y(selected.close)} /><circle cx={selectedX} cy={selectedY ?? y(selected.close)} r="3" /></g>}
       <rect x="0" y="0" width="640" height="355" fill="transparent" pointerEvents="all" />
     </svg>
+    {personal && data.flatMap((item, index) => {
+      const group = personalGroups.get(item.time);
+      if (!group) return [];
+      const x = (viewport.leftSlots + index + .5) * width;
+      return (["buy", "sell"] as const).filter((side) => group[side].length && personal.visibility[side === "buy" ? "buyOrders" : "sellOrders"]).map((side) => {
+        const position = side === "buy" ? Math.min(251, y(item.low) + 25) : Math.max(17, y(item.high) - 25);
+        return <span key={`${item.time}-${side}`} className={`personal-trade-marker ${side}`} style={{ left: `${x / 640 * 100}%`, top: `${position / 355 * 100}%` }}>{side === "buy" ? "B" : "S"}</span>;
+      });
+    })}
     {buyAverageY !== null && <span className="chart-average-price buy" style={{ top: `${buyAverageY / 355 * 100}%` }}>买入均价 {marketNumber(buyAverage, 8)}</span>}
     {sellAverageY !== null && <span className="chart-average-price sell" style={{ top: `${sellAverageY / 355 * 100}%` }}>卖出均价 {marketNumber(sellAverage, 8)}</span>}
     {[0, 1, 2, 3, 4].filter((line) => (latestY === null || Math.abs(latestY - (30 + line * 52)) > 13) && (!selected || Math.abs((selectedY ?? y(selected.close)) - (30 + line * 52)) > 13)).map((line) => <span key={line} className="chart-price-label" style={{ top: `${(26 + line * 52) / 355 * 100}%` }}>{marketNumber(low + span * (240 - (30 + line * 52)) / 210, priceDigits)}</span>)}
