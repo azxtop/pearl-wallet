@@ -23,6 +23,14 @@ test('public market never includes account data; connection token gates balances
       } else response.end(JSON.stringify([{ currency: 'PRL', balance: '12', locked: '1' }, { currency: 'USDT', balance: '3', locked: '0' }, { currency: 'BTC', balance: '10', locked: '0' }]));
     } else if (path.includes('/tickers/prlusdt')) response.end(JSON.stringify({ last: '1.5', high: '2', low: '1', volume: '4', amount: '6', price_change_percent: '+5%' }));
     else if (path.includes('/depth')) response.end(JSON.stringify({ asks: [['1.6', '2']], bids: [['1.4', '3']] }));
+    else if (path.startsWith('/trade/market/trades?')) {
+      const nonce = request.headers['x-auth-nonce'];
+      const signature = createHmac('sha256', secret).update(nonce + key).digest('hex');
+      if (request.headers['x-auth-apikey'] !== key || request.headers['x-auth-signature'] !== signature) {
+        response.statusCode = 403;
+        response.end('{}');
+      } else response.end(JSON.stringify([{ id: 41, market: 'prlusdt', side: 'sell', order_side: 'buy', price: '1.25', amount: '4', created_at: new Date(Date.now() - 60_000).toISOString() }]));
+    }
     else if (path.includes('/trades')) response.end(JSON.stringify([{ id: 1, price: '1.5', amount: '2', side: 'buy', created_at: '2026-09-27T02:56:30Z' }]));
     else if (path.includes('/k-line')) response.end(JSON.stringify([[1790477220, '1.5', '1.6', '1.4', '1.5', '2']]));
     else { response.statusCode = 404; response.end('{}'); }
@@ -61,6 +69,7 @@ test('public market never includes account data; connection token gates balances
     assert.equal('depth' in series, false);
     assert.equal((await fetch(`${base}/candles?interval=bad`)).status, 400);
     assert.equal((await fetch(`${base}/account`)).status, 401);
+    assert.equal((await fetch(`${base}/personal-trades`)).status, 401);
     assert.equal((await fetch(`${base}/account-stream-ticket`, { method: 'POST' })).status, 401);
     const publicStream = new WebSocket(`ws://127.0.0.1:${port}/api/safetrade/stream`);
     const publicFrame = await new Promise((resolve, reject) => {
@@ -78,6 +87,16 @@ test('public market never includes account data; connection token gates balances
     const account = await (await fetch(`${base}/account`, { headers })).json();
     assert.deepEqual(account.balances.PRL, { available: '12', locked: '1' });
     assert.equal('BTC' in account.balances, false);
+    let personal = await (await fetch(`${base}/personal-trades`, { headers })).json();
+    for (let attempt = 0; personal.syncing && attempt < 40; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      personal = await (await fetch(`${base}/personal-trades`, { headers })).json();
+    }
+    assert.equal(personal.syncing, false);
+    assert.equal(personal.trades.length, 1);
+    assert.equal(personal.trades[0].side, 'buy');
+    assert.equal(personal.averages.buy, 1.25);
+    assert.equal('personalTrades' in market, false);
     const ticketResponse = await fetch(`${base}/account-stream-ticket`, { method: 'POST', headers });
     assert.equal(ticketResponse.status, 200);
     const { ticket } = await ticketResponse.json();
@@ -91,6 +110,7 @@ test('public market never includes account data; connection token gates balances
     accountStream.close();
     assert.equal((await fetch(`${base}/account`, { method: 'DELETE', headers })).status, 200);
     assert.equal((await fetch(`${base}/account`, { headers })).status, 401);
+    assert.equal((await fetch(`${base}/personal-trades`, { headers })).status, 401);
   } finally {
     if (child.exitCode === null) {
       const exited = new Promise((resolve) => child.once('exit', resolve));

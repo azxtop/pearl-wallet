@@ -23,6 +23,8 @@ export type AccountData = {
   balances: { PRL: { available: string; locked: string }; USDT: { available: string; locked: string } };
   updatedAt: number;
 };
+export type PersonalTrade = { id: string; time: number; side: 'buy' | 'sell'; price: number; amount: number };
+export type PersonalTradeHistory = { trades: PersonalTrade[]; averages: { buy: number | null; sell: number | null }; coveredFrom: number | null; updatedAt: number | null; syncing: boolean; error: string | null };
 
 const API_URL = import.meta.env.VITE_SAFETRADE_API_URL || 'https://pearlwallet.az1993.xyz/api/safetrade';
 const WPRL_API_URL = import.meta.env.VITE_WPRL_API_URL || 'https://pearlwallet.az1993.xyz/api/wprl';
@@ -74,6 +76,7 @@ export const loadAsterCandles = (interval: string) => request<CandleSeries>(`${A
 export const openAsterStream = () => new WebSocket(`${ASTER_API_URL.replace(/^http/, 'ws')}/stream`);
 export const connectAccount = (key: string, secret: string) => request<{ token: string }>(`${API_URL}/connection`, 'POST', { key, secret });
 export const loadAccount = (token: string) => request<AccountData>(`${API_URL}/account`, 'GET', undefined, token);
+export const loadPersonalTrades = (token: string) => request<PersonalTradeHistory>(`${API_URL}/personal-trades`, 'GET', undefined, token);
 export const accountStreamTicket = (token: string) => request<{ ticket: string }>(`${API_URL}/account-stream-ticket`, 'POST', undefined, token);
 export const openAccountStream = (ticket: string) => new WebSocket(`${API_URL.replace(/^http/, 'ws')}/account-stream`, ['pearl-v1', `ticket.${ticket}`]);
 export const disconnectAccount = (token: string) => request<{ disconnected: boolean }>(`${API_URL}/account`, 'DELETE', undefined, token);

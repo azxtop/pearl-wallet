@@ -17,7 +17,7 @@ Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账�
 - 转账广播成功后，在本机保存交易 ID、所花输入和找零金额；浏览器尚未列出 0 确认转出时，Activity 立即显示待确认记录，余额显示估算找零，并阻止复用已广播的输入。浏览器同步完成后以链上数据为准。
 - 发送页显示钱包余额、按当前费率计算的最多可发送金额、25%/50%/75%/MAX 快捷金额与经济/标准/优先三档费率。费率分别为 1/2/4 grains/vB，预览按所选费率构造交易并显示实际估算手续费；确认速度不保证。
 - App 前台每 5 秒用主浏览器扫描余额和 UTXO，仅在结果变化时读取交易历史；尝试连接浏览器 SSE，断线后逐步延长重连时间。主浏览器请求失败后暂停 60 秒起，切到备用浏览器并放慢检查，冷却结束后自动重试主浏览器。App 进入手机后台时暂停连接与轮询，返回前台立即同步。
-- Market 页面可切换 SafeTrade PRL/USDT、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid BTC/USDC 永续示例与 Lighter PRL/USDC 永续。SafeTrade 展示 K 线、24 小时行情、左右并排买卖盘和最新成交；WPRL 展示指定链上交易池的 K 线、流动性和成交；Hyperliquid 与 Lighter 展示公开 K 线、盘口、成交、标记价、资金费率和持仓量。K 线可切换周期、双指缩放、横向拖动和点选查看单根详情；服务器返回最近 300 根。公开行情不需要个人 API Key。用户可在 App 输入自己的 SafeTrade 只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PRL、USDT 余额；可在 App 中断开并撤销令牌。不含下单和提款功能。
+- Market 页面可切换 SafeTrade PRL/USDT、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid BTC/USDC 永续示例与 Lighter PRL/USDC 永续。SafeTrade 展示 K 线、24 小时行情、左右并排买卖盘和最新成交；WPRL 展示指定链上交易池的 K 线、流动性和成交；Hyperliquid 与 Lighter 展示公开 K 线、盘口、成交、标记价、资金费率和持仓量。K 线可切换周期、双指缩放、横向拖动和点选查看单根详情；服务器返回最近 300 根。公开行情不需要个人 API Key。用户可在 App 输入自己的 SafeTrade 只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PRL、USDT 余额。用户可在 SafeTrade K 线设置中选择显示个人成交标记、买卖加权均价和单根 K 线的成交详情；历史成交由服务器加密保存，断开连接时删除。App 不含下单和提款功能。
 - SafeTrade 现货资产的主数字包含可用余额和挂单占用，另显示两者明细与按 PRL/USDT 现货价计算的预估总资产（USDT）。
 - 常规页面允许系统截屏；创建和导入钱包的助记词界面，以及 Setting 中显示助记词时，Android 启用防截屏。SafeTrade 前台每 5 秒更新公开行情，服务器按端点缓存 5–10 秒；WPRL 前台接收链上成交推送，并定时核对公开行情。
 - 检查 HTTPS 版本清单、下载并校验 APK 的 SHA-256，再交给 Android 安装。更新 APK 必须与已安装应用使用同一签名密钥。
@@ -44,7 +44,7 @@ APK 位于 `releases/`。`PearlWallet-0.2.33-debug.apk` 可覆盖此前安装的
 
 ## SafeTrade 服务
 
-本地执行 `npm run server` 前，设置 `PEARL_CREDENTIAL_KEY_FILE` 为一个仅服务进程可读取的文件，内容是随机 32 字节密钥的 Base64 编码；设置 `PEARL_DATA_DIR` 保存 SQLite 数据库。密钥文件丢失后，已保存的 SafeTrade 连接无法解密。默认只监听 `127.0.0.1:8787`。公开 `GET /api/safetrade/overview` 返回价格、盘口和成交，`GET /api/safetrade/candles?interval=1m` 返回指定周期 K 线；原 `GET /api/safetrade?interval=1m` 继续兼容旧版。公开数据在服务端短时缓存并后台刷新，App 会按周期保存公开 K 线，切换时先显示已有数据。`POST /api/safetrade/connection` 验证只读密钥并返回随机令牌；`GET/DELETE /api/safetrade/account` 需要令牌，分别读取 PRL、USDT 余额和撤销连接。
+本地执行 `npm run server` 前，设置 `PEARL_CREDENTIAL_KEY_FILE` 为一个仅服务进程可读取的文件，内容是随机 32 字节密钥的 Base64 编码；设置 `PEARL_DATA_DIR` 保存 SQLite 数据库。密钥文件丢失后，已保存的 SafeTrade 连接无法解密。默认只监听 `127.0.0.1:8787`。公开 `GET /api/safetrade/overview` 返回价格、盘口和成交，`GET /api/safetrade/candles?interval=1m` 返回指定周期 K 线；原 `GET /api/safetrade?interval=1m` 继续兼容旧版。公开数据在服务端短时缓存并后台刷新，App 会按周期保存公开 K 线，切换时先显示已有数据。`POST /api/safetrade/connection` 验证只读密钥并返回随机令牌；`GET/DELETE /api/safetrade/account` 需要令牌，分别读取 PRL、USDT 余额和撤销连接。`GET /api/safetrade/personal-trades` 需要令牌，首次从 SafeTrade 拉取近 165 天的 PRL/USDT 个人成交，此后增量同步；成交记录在服务端 SQLite 中加密保存，断开连接时删除。
 
 服务端持续订阅 SafeTrade 的公开 WebSocket 行情、盘口增量和成交，按序号维护盘口，并通过 `/api/safetrade/stream` 将增量推送给前台 App。历史 K 线仍通过 REST 获取，当前 K 线由实时成交更新，并定期用 REST 校正。账户余额使用 SafeTrade 私有 WebSocket 事件触发只读 REST 核对；App 先凭连接令牌换取一次性短期票据，再连接 `/api/safetrade/account-stream`。断线时自动重连，REST 定时刷新继续兜底。WebSocket 服务端需通过 Nginx 转发 Upgrade 请求。
 

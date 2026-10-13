@@ -12,6 +12,7 @@ import { createHyperliquidFanout } from './hyperliquid-fanout.mjs';
 import { createLighterFeed } from './lighter.mjs';
 import { createAsterFeed } from './aster.mjs';
 import { createTradeHistory } from './trade-history.mjs';
+import { BACKFILL_SECONDS, fetchPersonalTrades, personalTradeAverages } from './personal-trades.mjs';
 
 const HOST = process.env.PEARL_SERVER_HOST || '127.0.0.1';
 const PORT = Number(process.env.PEARL_SERVER_PORT || 8787);
@@ -28,13 +29,19 @@ mkdirSync(DATA_DIR, { recursive: true });
 const tradeHistory = createTradeHistory(resolve(DATA_DIR, 'trade-history.sqlite'));
 const db = new DatabaseSync(resolve(DATA_DIR, 'accounts.sqlite'));
 db.exec('CREATE TABLE IF NOT EXISTS connections (token_hash TEXT PRIMARY KEY, credentials TEXT NOT NULL, created_at INTEGER NOT NULL)');
+db.exec('CREATE TABLE IF NOT EXISTS personal_trade_cache (token_hash TEXT PRIMARY KEY, payload TEXT NOT NULL, covered_from INTEGER NOT NULL, synced_at INTEGER NOT NULL)');
 const insertConnection = db.prepare('INSERT INTO connections(token_hash, credentials, created_at) VALUES(?, ?, ?)');
 const findConnection = db.prepare('SELECT credentials FROM connections WHERE token_hash = ?');
 const deleteConnection = db.prepare('DELETE FROM connections WHERE token_hash = ?');
+const findPersonalTrades = db.prepare('SELECT payload, covered_from, synced_at FROM personal_trade_cache WHERE token_hash = ?');
+const savePersonalTrades = db.prepare('INSERT INTO personal_trade_cache(token_hash, payload, covered_from, synced_at) VALUES(?, ?, ?, ?) ON CONFLICT(token_hash) DO UPDATE SET payload=excluded.payload, covered_from=excluded.covered_from, synced_at=excluded.synced_at');
+const deletePersonalTrades = db.prepare('DELETE FROM personal_trade_cache WHERE token_hash = ?');
 
 const ALLOWED_ORIGINS = new Set(['http://localhost', 'https://localhost', 'http://localhost:5173', 'http://127.0.0.1:5173', 'https://pearlwallet.az1993.xyz']);
 const marketCache = new Map();
 const accountCache = new Map();
+const personalTradeSyncs = new Map();
+const personalTradeRetryAt = new Map();
 const connectionAttempts = new Map();
 const streamClients = new Set();
 const streamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
@@ -347,6 +354,50 @@ async function accountData(token, force = false) {
   return result;
 }
 
+function syncPersonalTradeHistory(hash, credentials) {
+  const existing = personalTradeSyncs.get(hash);
+  if (existing) return existing;
+  const pending = (async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const cached = findPersonalTrades.get(hash);
+    const from = cached ? Math.max(now - BACKFILL_SECONDS, Math.floor(cached.synced_at / 1000) - 3600) : now - BACKFILL_SECONDS;
+    const { key, secret } = decrypt(credentials);
+    const incoming = await fetchPersonalTrades(from, now, ({ from: start, to: end, page, limit }) => {
+      const query = new URLSearchParams({ market: 'prlusdt', time_from: String(start), time_to: String(end), page: String(page), limit: String(limit), ordering: 'asc' });
+      return fetchJson(`/trade/market/trades?${query}`, authHeaders(key, secret));
+    });
+    if (!findConnection.get(hash)) return;
+    const trades = new Map((cached ? decrypt(cached.payload) : []).map((trade) => [trade.id, trade]));
+    for (const trade of incoming) trades.set(trade.id, trade);
+    const ordered = [...trades.values()].sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
+    savePersonalTrades.run(hash, encrypt(ordered), cached?.covered_from ?? from, Date.now());
+    personalTradeRetryAt.delete(hash);
+  })().catch((error) => {
+    personalTradeRetryAt.set(hash, Date.now() + 30_000);
+    console.warn('SafeTrade personal trade sync:', error.message);
+  }).finally(() => personalTradeSyncs.delete(hash));
+  personalTradeSyncs.set(hash, pending);
+  return pending;
+}
+
+function personalTradeHistory(token) {
+  const hash = tokenHash(token);
+  const connection = findConnection.get(hash);
+  if (!connection) return null;
+  const cached = findPersonalTrades.get(hash);
+  const shouldSync = (!cached || Date.now() - cached.synced_at > 60_000) && Date.now() >= (personalTradeRetryAt.get(hash) || 0);
+  if (shouldSync) syncPersonalTradeHistory(hash, connection.credentials);
+  const trades = cached ? decrypt(cached.payload) : [];
+  return {
+    trades,
+    averages: personalTradeAverages(trades),
+    coveredFrom: cached?.covered_from ?? null,
+    updatedAt: cached?.synced_at ?? null,
+    syncing: personalTradeSyncs.has(hash),
+    error: (personalTradeRetryAt.get(hash) || 0) > Date.now() ? '个人成交同步暂不可用' : null,
+  };
+}
+
 function startAccountFeed(client, hash, credentials) {
   const { key, secret } = decrypt(credentials);
   const endpoint = `${API_BASE.replace(/^http/, 'ws').replace(/\/$/, '')}/websocket/private`;
@@ -564,6 +615,14 @@ async function handle(request, response) {
     }
     return json(response, 200, { ticket });
   }
+  if (url.pathname === '/api/safetrade/personal-trades' && request.method === 'GET') {
+    const token = requestToken(request);
+    if (!token) return json(response, 401, { error: '未连接 SafeTrade' });
+    try {
+      const data = personalTradeHistory(token);
+      return data ? json(response, 200, data) : json(response, 401, { error: '连接已失效' });
+    } catch { return json(response, 502, { error: '个人成交暂不可用' }); }
+  }
   if (url.pathname === '/api/safetrade/account') {
     const token = requestToken(request);
     if (!token) return json(response, 401, { error: '未连接 SafeTrade' });
@@ -571,6 +630,8 @@ async function handle(request, response) {
       const hash = tokenHash(token);
       deleteConnection.run(hash);
       accountCache.delete(hash);
+      deletePersonalTrades.run(hash);
+      personalTradeRetryAt.delete(hash);
       for (const client of accountStreams.get(hash) || []) client.close(1008, 'Connection revoked');
       return json(response, 200, { disconnected: true });
     }
