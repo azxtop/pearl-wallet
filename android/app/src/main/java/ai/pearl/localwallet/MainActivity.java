@@ -11,6 +11,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(UpdateInstallerPlugin.class);
         registerPlugin(ScreenPrivacyPlugin.class);
         super.onCreate(savedInstanceState);
+        getBridge().getWebView().getSettings().setSupportZoom(false);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE);
     }
 }
