@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Pearl Wallet ${version} 预发布版\n\n- SafeTrade 个人成交设置显示最近同步与最新成交时间。\n- 自定义时间范围可将结束时间设为“现在”，持续包含新成交。\n- 结束时间控件改为与图表设置一致的开关样式。\n\nSHA-256: ${hash}`,
+      body: `Pearl Wallet ${version} 预发布版\n\n- Hyperliquid 行情切换为正式上线的 EntropyIO HIP-3 PEARL 永续合约（io:PRL），显示 PRL/USDC。\n- 清除原 BTC 示例行情缓存，避免切换后短暂显示旧图表。\n- 调整 Hyperliquid 价格精度，并让 K 线价格标签使用正确的计价币。\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);
