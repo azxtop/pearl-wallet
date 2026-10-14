@@ -29,4 +29,11 @@ describe('personal trade chart labels', () => {
     expect(summarizePersonalTrades(chosen.filter((trade) => trade.side === 'buy'))?.price).toBe(2);
     expect(filterPersonalTrades(trades, { period: '7d', from: '', to: '' }, day(27) * 1000)).toHaveLength(4);
   });
+  it('keeps a custom range with an open end current as time advances', () => {
+    const at = (day: number) => Math.floor(new Date(2026, 9, day, 12).getTime() / 1000);
+    const trades: PersonalTrade[] = [14, 15].map((day) => ({ id: String(day), time: at(day), side: 'buy', price: 1, amount: 1 }));
+    const range = { period: 'custom' as const, from: '2026-10-14', to: 'now' };
+    expect(filterPersonalTrades(trades, range, at(14) * 1000)).toHaveLength(1);
+    expect(filterPersonalTrades(trades, range, at(15) * 1000)).toHaveLength(2);
+  });
 });

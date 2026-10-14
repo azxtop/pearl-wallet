@@ -51,7 +51,7 @@ function loadPersonalChartRange(): PersonalTradeRange {
   try {
     const saved = JSON.parse(localStorage.getItem(PERSONAL_CHART_RANGE_KEY) || "null");
     if (!saved || !["all", "7d", "30d", "90d", "custom"].includes(saved.period)) return defaults;
-    return { period: saved.period, from: /^\d{4}-\d{2}-\d{2}$/.test(saved.from) ? saved.from : defaults.from, to: /^\d{4}-\d{2}-\d{2}$/.test(saved.to) ? saved.to : defaults.to };
+    return { period: saved.period, from: /^\d{4}-\d{2}-\d{2}$/.test(saved.from) ? saved.from : defaults.from, to: saved.to === 'now' || /^\d{4}-\d{2}-\d{2}$/.test(saved.to) ? saved.to : defaults.to };
   } catch { return defaults; }
 }
 type WalletPage = "home" | "send" | "receive" | "history";
@@ -250,7 +250,10 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
           <div className="chart-range-presets" role="group" aria-label="个人成交时间范围">{([
             ["all", "全部"], ["7d", "7 天"], ["30d", "30 天"], ["90d", "90 天"], ["custom", "自定义"],
           ] as [PersonalTradeRange["period"], string][]).map(([period, label]) => <button type="button" className={personalRange.period === period ? "active" : ""} aria-pressed={personalRange.period === period} key={period} onClick={() => updatePersonalRange({ ...personalRange, period })}>{label}</button>)}</div>
-          {personalRange.period === "custom" && <div className="chart-range-dates"><label>开始<input type="date" value={personalRange.from} onChange={(event) => { const from = event.target.value; if (from) updatePersonalRange({ ...personalRange, from, to: from > personalRange.to ? from : personalRange.to }); }} /></label><label>结束<input type="date" value={personalRange.to} onChange={(event) => { const to = event.target.value; if (to) updatePersonalRange({ ...personalRange, from: to < personalRange.from ? to : personalRange.from, to }); }} /></label></div>}
+          {personalRange.period === "custom" && <div className="chart-range-dates">
+            <label>开始<input type="date" value={personalRange.from} onChange={(event) => { const from = event.target.value; if (from) updatePersonalRange({ ...personalRange, from, to: personalRange.to !== 'now' && from > personalRange.to ? from : personalRange.to }); }} /></label>
+            <div className="chart-range-end"><label>结束<input type="date" value={personalRange.to === 'now' ? chartDate(0) : personalRange.to} onChange={(event) => { const to = event.target.value; if (to) updatePersonalRange({ ...personalRange, from: to < personalRange.from ? to : personalRange.from, to }); }} /></label><button type="button" className={personalRange.to === 'now' ? 'active' : ''} aria-pressed={personalRange.to === 'now'} onClick={() => updatePersonalRange({ ...personalRange, to: 'now' })}>现在</button></div>
+          </div>}
           {personalRange.period === "custom" && personalRange.to < chartDate(0) && <div className="chart-range-warning">结束日期早于今天，新成交会被隐藏</div>}{([
           ["buyOrders", "显示买单"], ["sellOrders", "显示卖单"], ["buyAverage", "显示买入数量/均价"], ["sellAverage", "显示卖出数量/均价"],
         ] as [PersonalChartLayer, string][]).map(([layer, label]) => <button type="button" role="switch" aria-checked={personal.visibility[layer]} key={layer} onClick={() => personal.onToggle(layer)}><span>{label}</span><span className={`chart-switch ${personal.visibility[layer] ? "active" : ""}`} /></button>)}

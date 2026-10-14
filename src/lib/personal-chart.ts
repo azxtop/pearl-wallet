@@ -4,7 +4,7 @@ import type { MarketInterval } from './market-cache';
 const SECONDS: Record<MarketInterval, number> = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14_400, '1d': 86_400 };
 export type CandlePersonalTrades = { buy: PersonalTrade[]; sell: PersonalTrade[] };
 export type PersonalTradePeriod = 'all' | '7d' | '30d' | '90d' | 'custom';
-export type PersonalTradeRange = { period: PersonalTradePeriod; from: string; to: string };
+export type PersonalTradeRange = { period: PersonalTradePeriod; from: string; to: string | 'now' };
 
 function localDayStart(date: string, nextDay = false): number | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
@@ -18,7 +18,7 @@ export function filterPersonalTrades(trades: PersonalTrade[], range: PersonalTra
   if (range.period === 'all') return trades;
   if (range.period === 'custom') {
     const from = localDayStart(range.from);
-    const until = localDayStart(range.to, true);
+    const until = range.to === 'now' ? now / 1000 + 1 : localDayStart(range.to, true);
     return from === null || until === null || from >= until ? [] : trades.filter((trade) => trade.time >= from && trade.time < until);
   }
   const days = range.period === '7d' ? 7 : range.period === '30d' ? 30 : 90;
