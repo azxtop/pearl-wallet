@@ -154,6 +154,8 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
   const selectedX = selectedIndex >= 0 ? (viewport.leftSlots + selectedIndex + .5) * width : 0;
   const gridTimes = [1, 2, 3].map((part) => ({ x: 160 * part, candle: data[Math.floor(visibleCount * part / 4) - viewport.leftSlots] }));
   const timeLabel = (time: number) => new Date(time * 1000).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const personalTimeLabel = (time: number) => new Date(time).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const latestPersonalTrade = personal?.history?.trades.at(-1);
   function movingAverage(index: number, period: number) {
     const globalIndex = viewport.firstIndex + index;
     if (globalIndex < period - 1) return null;
@@ -248,9 +250,19 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
           <div className="chart-range-presets" role="group" aria-label="个人成交时间范围">{([
             ["all", "全部"], ["7d", "7 天"], ["30d", "30 天"], ["90d", "90 天"], ["custom", "自定义"],
           ] as [PersonalTradeRange["period"], string][]).map(([period, label]) => <button type="button" className={personalRange.period === period ? "active" : ""} aria-pressed={personalRange.period === period} key={period} onClick={() => updatePersonalRange({ ...personalRange, period })}>{label}</button>)}</div>
-          {personalRange.period === "custom" && <div className="chart-range-dates"><label>开始<input type="date" value={personalRange.from} onChange={(event) => { const from = event.target.value; if (from) updatePersonalRange({ ...personalRange, from, to: from > personalRange.to ? from : personalRange.to }); }} /></label><label>结束<input type="date" value={personalRange.to} onChange={(event) => { const to = event.target.value; if (to) updatePersonalRange({ ...personalRange, from: to < personalRange.from ? to : personalRange.from, to }); }} /></label></div>}{([
+          {personalRange.period === "custom" && <div className="chart-range-dates"><label>开始<input type="date" value={personalRange.from} onChange={(event) => { const from = event.target.value; if (from) updatePersonalRange({ ...personalRange, from, to: from > personalRange.to ? from : personalRange.to }); }} /></label><label>结束<input type="date" value={personalRange.to} onChange={(event) => { const to = event.target.value; if (to) updatePersonalRange({ ...personalRange, from: to < personalRange.from ? to : personalRange.from, to }); }} /></label></div>}
+          {personalRange.period === "custom" && personalRange.to < chartDate(0) && <div className="chart-range-warning">结束日期早于今天，新成交会被隐藏</div>}{([
           ["buyOrders", "显示买单"], ["sellOrders", "显示卖单"], ["buyAverage", "显示买入数量/均价"], ["sellAverage", "显示卖出数量/均价"],
-        ] as [PersonalChartLayer, string][]).map(([layer, label]) => <button type="button" role="switch" aria-checked={personal.visibility[layer]} key={layer} onClick={() => personal.onToggle(layer)}><span>{label}</span><span className={`chart-switch ${personal.visibility[layer] ? "active" : ""}`} /></button>)}<small>{!personal.connected ? "先连接 SafeTrade 只读 API" : personal.error || personal.history?.error || (personal.history?.syncing ? "正在同步个人成交…" : `该时段 ${filteredPersonalTrades.length} 笔 · 已同步 ${personal.history?.trades.length ?? 0} 笔`)}</small></div>}
+        ] as [PersonalChartLayer, string][]).map(([layer, label]) => <button type="button" role="switch" aria-checked={personal.visibility[layer]} key={layer} onClick={() => personal.onToggle(layer)}><span>{label}</span><span className={`chart-switch ${personal.visibility[layer] ? "active" : ""}`} /></button>)}
+          <div className="chart-sync-status">
+            {!personal.connected ? "先连接 SafeTrade 只读 API" : <>
+              <span>该时段 {filteredPersonalTrades.length} 笔 · 已同步 {personal.history?.trades.length ?? 0} 笔{personal.history?.syncing ? " · 正在同步" : ""}</span>
+              {personal.history?.updatedAt && <span>最近同步：{personalTimeLabel(personal.history.updatedAt)}</span>}
+              {latestPersonalTrade && <span>最新成交：{personalTimeLabel(latestPersonalTrade.time * 1000)}</span>}
+              {(personal.error || personal.history?.error) && <span className="chart-sync-error">同步失败：{personal.error || personal.history?.error}</span>}
+            </>}
+          </div>
+        </div>}
       </div>}
     </div></div>
     {personal && ((personal.visibility.buyAverage && buySummary) || (personal.visibility.sellAverage && sellSummary)) && <div className="chart-average-summary">{personal.visibility.buyAverage && buySummary && <span className="buy">买入 {marketNumber(buySummary.amount, 8)} @ {marketNumber(buySummary.price, 8)}</span>}{personal.visibility.sellAverage && sellSummary && <span className="sell">卖出 {marketNumber(sellSummary.amount, 8)} @ {marketNumber(sellSummary.price, 8)}</span>}</div>}
