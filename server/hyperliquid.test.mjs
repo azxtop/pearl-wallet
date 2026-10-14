@@ -40,6 +40,28 @@ test('records one-minute candles and derives higher intervals across restart', a
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('keeps HIP-3 PRL candles separate from the former BTC example', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'pearl-hl-prl-'));
+  const path = join(dir, 'hl.sqlite');
+  const base = 1_800_000_000_000;
+  const fetcher = async (_url, options) => {
+    const coin = JSON.parse(options.body).req.coin;
+    return { ok: true, json: async () => [{ t: base, o: coin === 'BTC' ? '100' : '2', h: coin === 'BTC' ? '101' : '2.1', l: coin === 'BTC' ? '99' : '1.9', c: coin === 'BTC' ? '100' : '2.05', v: '5' }] };
+  };
+  try {
+    const btc = createHyperliquidFeed({ storePath: path, fetcher, now: () => base + 60_000 });
+    await btc.backfill();
+    btc.stop();
+    const prl = createHyperliquidFeed({ storePath: path, coin: 'io:PRL', dex: 'io', fetcher, now: () => base + 60_000 });
+    await prl.backfill();
+    const series = prl.getCandles('1m');
+    assert.equal(series.pair, 'PRL/USDC');
+    assert.equal(series.candles.length, 1);
+    assert.equal(series.candles[0].close, 2.05);
+    prl.stop();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('switches trade fanout to sampled batches at 100 viewers and reports skipped trades', () => {
   let time = 1_000_000;
   const fanout = createHyperliquidFanout({ now: () => time });

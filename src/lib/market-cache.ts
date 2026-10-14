@@ -6,7 +6,7 @@ export type PublicMarketCache = { overview: MarketOverview | null; series: Parti
 
 const KEY = 'pearl-public-market-cache-v1';
 const WPRL_KEY = 'pearl-wprl-market-cache-v1';
-const HYPERLIQUID_KEY = 'pearl-hyperliquid-market-cache-v1';
+const HYPERLIQUID_KEY = 'pearl-hyperliquid-io-prl-market-cache-v1';
 const LIGHTER_KEY = 'pearl-lighter-market-cache-v1';
 const ASTER_KEY = 'pearl-aster-pearl-market-cache-v1';
 const EMPTY = (): PublicMarketCache => ({ overview: null, series: {} });

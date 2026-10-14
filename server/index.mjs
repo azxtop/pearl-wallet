@@ -169,15 +169,16 @@ const wprlFeed = createWprlFeed({
   },
 });
 
+const hyperliquidCoin = process.env.HYPERLIQUID_COIN || 'io:PRL';
 const hyperliquidFeed = createHyperliquidFeed({
   storePath: resolve(DATA_DIR, 'hyperliquid-market.sqlite'),
-  coin: process.env.HYPERLIQUID_COIN || 'BTC',
-  dex: process.env.HYPERLIQUID_DEX || '',
+  coin: hyperliquidCoin,
+  dex: process.env.HYPERLIQUID_DEX ?? (hyperliquidCoin.includes(':') ? hyperliquidCoin.split(':')[0] : ''),
   quote: process.env.HYPERLIQUID_QUOTE || 'USDC',
   onFrame: (frame) => {
     if (frame.type === 'full-depth') broadcastMarketDepth('hyperliquid', frame.depth, frame.updatedAt);
     else {
-      if (frame.type === 'trades') tradeHistory.add('hyperliquid', hyperliquidFeed.contract()?.pair ?? 'BTC/USDC', frame.trades);
+      if (frame.type === 'trades') tradeHistory.add('hyperliquid', hyperliquidFeed.contract()?.pair ?? 'PRL/USDC', frame.trades);
       hyperliquidFanout.broadcast(frame);
     }
   },

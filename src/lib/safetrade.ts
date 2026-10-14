@@ -11,7 +11,7 @@ export type MarketData = {
   updatedAt: number;
 };
 
-export type MarketOverview = Pick<MarketData, 'pair' | 'price' | 'stats24h' | 'depth' | 'trades' | 'marketError' | 'updatedAt'> & { liquidityUsd?: number | null; recordingSince?: number | null; statsSource?: 'provider' | 'recorded'; contract?: { coin: string; pair: string; quote: string; dex?: string | null; example: boolean; szDecimals?: number; marketId?: number }; markPrice?: number | null; oraclePrice?: number | null; funding?: number | null; openInterest?: number | null };
+export type MarketOverview = Pick<MarketData, 'pair' | 'price' | 'stats24h' | 'depth' | 'trades' | 'marketError' | 'updatedAt'> & { liquidityUsd?: number | null; recordingSince?: number | null; statsSource?: 'provider' | 'recorded'; contract?: { coin: string; marketCoin?: string; pair: string; quote: string; dex?: string | null; example: boolean; szDecimals?: number; marketId?: number }; markPrice?: number | null; oraclePrice?: number | null; funding?: number | null; openInterest?: number | null };
 export type CandleSeries = Pick<MarketData, 'candles' | 'updatedAt'> & { pair?: string; interval: string; source?: 'provider' | 'recorded' | 'mixed'; recordingSince?: number | null; syncedThrough?: number | null };
 export type MarketStreamFrame =
   | { type: 'overview'; data: MarketOverview }

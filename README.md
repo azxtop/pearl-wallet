@@ -6,7 +6,7 @@
 
 当前支持助记词导入，尚不支持单独私钥导入。应用未经独立安全审计；只需查看余额与交易时，建议使用观察地址。
 
-Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；Market 可切换 SafeTrade PRL/USDT、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid BTC/USDC 永续示例与 Lighter PRL/USDC 永续，SafeTrade 还可只读展示 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
+Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；Market 可切换 SafeTrade PRL/USDT、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid PRL/USDC 永续、Lighter PRL/USDC 永续与 Aster PEARL/USDT 永续，SafeTrade 还可只读展示 PRL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
 
 ## 已实现
 
@@ -17,7 +17,7 @@ Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账�
 - 转账广播成功后，在本机保存交易 ID、所花输入和找零金额；浏览器尚未列出 0 确认转出时，Activity 立即显示待确认记录，余额显示估算找零，并阻止复用已广播的输入。浏览器同步完成后以链上数据为准。
 - 发送页显示钱包余额、按当前费率计算的最多可发送金额、25%/50%/75%/MAX 快捷金额与经济/标准/优先三档费率。费率分别为 1/2/4 grains/vB，预览按所选费率构造交易并显示实际估算手续费；确认速度不保证。
 - App 前台每 5 秒用主浏览器扫描余额和 UTXO，仅在结果变化时读取交易历史；尝试连接浏览器 SSE，断线后逐步延长重连时间。主浏览器请求失败后暂停 60 秒起，切到备用浏览器并放慢检查，冷却结束后自动重试主浏览器。App 进入手机后台时暂停连接与轮询，返回前台立即同步。
-- Market 页面可切换 SafeTrade PRL/USDT、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid BTC/USDC 永续示例与 Lighter PRL/USDC 永续。SafeTrade 展示 K 线、24 小时行情、左右并排买卖盘和最新成交；WPRL 展示指定链上交易池的 K 线、流动性和成交；Hyperliquid 与 Lighter 展示公开 K 线、盘口、成交、标记价、资金费率和持仓量。K 线可切换周期、双指缩放、横向拖动和点选查看单根详情；服务器返回最近 300 根。公开行情不需要个人 API Key。用户可在 App 输入自己的 SafeTrade 只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PRL、USDT 余额。用户可在 SafeTrade K 线设置中选择显示个人成交标记、买卖加权均价和单根 K 线的成交详情；历史成交由服务器加密保存，断开连接时删除。App 不含下单和提款功能。
+- Market 页面可切换 SafeTrade PRL/USDT、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid PRL/USDC 永续、Lighter PRL/USDC 永续与 Aster PEARL/USDT 永续。SafeTrade 展示 K 线、24 小时行情、左右并排买卖盘和最新成交；WPRL 展示指定链上交易池的 K 线、流动性和成交；永续来源展示公开 K 线、盘口、成交、标记价、资金费率和持仓量。K 线可切换周期、双指缩放、横向拖动和点选查看单根详情；服务器返回最近 300 根。公开行情不需要个人 API Key。用户可在 App 输入自己的 SafeTrade 只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PRL、USDT 余额。用户可在 SafeTrade K 线设置中选择显示个人成交标记、买卖加权均价和单根 K 线的成交详情；历史成交由服务器加密保存，断开连接时删除。App 不含下单和提款功能。
 - SafeTrade 现货资产的主数字包含可用余额和挂单占用，另显示两者明细与按 PRL/USDT 现货价计算的预估总资产（USDT）。
 - 常规页面允许系统截屏；创建和导入钱包的助记词界面，以及 Setting 中显示助记词时，Android 启用防截屏。SafeTrade 前台每 5 秒更新公开行情，服务器按端点缓存 5–10 秒；WPRL 前台接收链上成交推送，并定时核对公开行情。
 - 检查 HTTPS 版本清单、下载并校验 APK 的 SHA-256，再交给 Android 安装。更新 APK 必须与已安装应用使用同一签名密钥。
@@ -52,7 +52,7 @@ APK 位于 `releases/`。`PearlWallet-0.2.36-debug.apk` 可覆盖此前安装的
 
 WPRL 行情使用以太坊主网 Uniswap V3 的 WPRL/USDT 交易池 `0x89a67c6dee35db9815da2fb9191f0998a8b37c39`。服务首次启用时把当前区块的下一个区块设为永久采集起点，不补起点之前的成交。Infura WebSocket 实时接收 `Swap` 日志，RPC 每 15 秒按持久化区块进度补漏并复查最近 20 个区块。服务端在 `/var/lib/pearlwallet/wprl-market.sqlite` 的 WAL SQLite 中保存成交、扫描进度和 1 分钟 K 线：成交保留 30 天，1 分钟 K 线长期保存；5 分钟至日线从分钟线生成。没有成交而已扫描的分钟按前收盘价显示零成交量，未扫描到的区间不会被当作零成交。短链重组通过复查重算受影响的分钟线。超过完整 24 小时的 24h 指标来自本地记录；此前概览和历史参考 K 线使用 GeckoTerminal，历史 K 线不会导入本地正式记录。参考 K 线的美元成交量按收盘价换算为近似 WPRL 数量，正式记录的数量来自链上 Swap。`GET /api/wprl/overview`、`GET /api/wprl/candles?interval=1m` 与 `/api/wprl/stream` 分别提供概览、K 线和推送。运行时设置 `WPRL_ENABLED=1`、`PEARL_INFURA_KEYS_DB` 指向仅服务账号可读的 SQLite 文件；文件须含 `infura_keys(api_key, available)` 表。RPC Key 只保存在服务器，绝不可提交仓库或放进 `VITE_*` 变量。WPRL 与 PRL 是不同资产，图表和成交分别按来源缓存。
 
-Hyperliquid 只读行情默认使用 BTC 永续合约作为功能示例，**不是 PRL 合约**。服务端用一条上游 WebSocket 订阅 1 分钟 K 线、L2 盘口、成交和资产上下文，再通过 `/api/hyperliquid/stream` 分发给 Market 前台；`/api/hyperliquid/overview`、`/api/hyperliquid/candles?interval=1m` 提供 REST 兜底。服务端先从官方 `candleSnapshot` 补最近最多 5000 根 1 分钟 K 线，此后通过实时推送与每两分钟补漏，在 `/var/lib/pearlwallet/hyperliquid-market.sqlite` 长期保存分钟线并汇总为 5 分钟至日线。供应商只能补最近约 5000 根，长时间停机超出此窗口会留下可见的时间缺口。默认逐笔转发成交；Hyperliquid 页达到 100 个连接或出站行情持续超过 5 Mbps 一分钟时，每秒只向客户端发送最新最多 10 笔并标明跳过数量；连接低于 60 且低于 2 Mbps 持续五分钟后恢复逐笔。慢客户端单独降采样。未来 PRL 合约正式上线并验证交易对后，可在服务器设置 `HYPERLIQUID_COIN` 和 HIP-3 的 `HYPERLIQUID_DEX`，App 从服务器读取合约名称，BTC 与 PRL K 线按合约分别存储；切换前须核实计价币、上下架状态和官方合约标识。
+Hyperliquid 只读行情默认使用 EntropyIO 的 HIP-3 `io:PRL` 永续合约，抵押与计价币为 USDC，在 App 显示为 PRL/USDC。服务端用一条上游 WebSocket 订阅 1 分钟 K 线、L2 盘口、成交和资产上下文，再通过 `/api/hyperliquid/stream` 分发给 Market 前台；`/api/hyperliquid/overview`、`/api/hyperliquid/candles?interval=1m` 提供 REST 兜底。服务端先从官方 `candleSnapshot` 补最近最多 5000 根 1 分钟 K 线，此后通过实时推送与每两分钟补漏，在 `/var/lib/pearlwallet/hyperliquid-market.sqlite` 长期保存分钟线并汇总为 5 分钟至日线。供应商只能补最近约 5000 根，长时间停机超出此窗口会留下可见的时间缺口。默认逐笔转发成交；Hyperliquid 页达到 100 个连接或出站行情持续超过 5 Mbps 一分钟时，每秒只向客户端发送最新最多 10 笔并标明跳过数量；连接低于 60 且低于 2 Mbps 持续五分钟后恢复逐笔。慢客户端单独降采样。原 BTC 示例 K 线与新 PRL K 线按合约标识分别存储；服务端可用 `HYPERLIQUID_COIN` 和 `HYPERLIQUID_DEX` 修改订阅市场。
 
 ## 已知限制
 

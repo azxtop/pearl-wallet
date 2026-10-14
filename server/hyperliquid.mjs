@@ -25,7 +25,8 @@ export function createHyperliquidFeed({ storePath, coin = 'BTC', dex = '', quote
   let socket, reconnectTimer, validationTimer, heartbeatTimer, backfillTimer, ctxTimer, started = false, retry = 1000;
   let contract = null, overview = null, depth = { asks: [], bids: [] }, trades = [];
   let lastCtx = null, lastCandleTime = 0, lastWsAt = 0, syncing = null;
-  const pair = () => `${coin}/${quote}`;
+  const displayCoin = coin.includes(':') ? coin.split(':').at(-1) : coin;
+  const pair = () => `${displayCoin}/${quote}`;
   const recordingSince = () => earliest.get(coin, '1m')?.time ?? null;
   const send = (frame) => onFrame(frame);
 
@@ -39,7 +40,7 @@ export function createHyperliquidFeed({ storePath, coin = 'BTC', dex = '', quote
     const [meta, contexts] = await info({ type: 'metaAndAssetCtxs', ...(dex ? { dex } : {}) });
     const index = meta?.universe?.findIndex((item) => item.name === coin);
     if (index < 0 || meta.universe[index].isDelisted) throw new Error(`Hyperliquid contract ${coin} unavailable or delisted`);
-    contract = { coin, pair: pair(), quote, dex: dex || null, example: coin === 'BTC', szDecimals: meta.universe[index].szDecimals };
+    contract = { coin: displayCoin, marketCoin: coin, pair: pair(), quote, dex: dex || null, example: coin === 'BTC', szDecimals: meta.universe[index].szDecimals };
     applyContext(contexts[index]);
   }
 
