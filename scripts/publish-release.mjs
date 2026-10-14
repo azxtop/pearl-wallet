@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Pearl Wallet ${version} 预发布版\n\n- SafeTrade K 线个人成交可按全部、近 7/30/90 天或自定义日期筛选。\n- 买入和卖出汇总显示所选时段的数量与成交均价。\n- 修正 SafeTrade 24h 成交量与成交额的单位对应。\n\nSHA-256: ${hash}`,
+      body: `Pearl Wallet ${version} 预发布版\n\n- SafeTrade 个人成交设置显示最近同步与最新成交时间。\n- 自定义时间范围可将结束时间设为“现在”，持续包含新成交。\n- 结束时间控件改为与图表设置一致的开关样式。\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);
