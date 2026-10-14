@@ -252,7 +252,10 @@ function CandleChart({ candles, currentPrice, loading = false, status = "", symb
           ] as [PersonalTradeRange["period"], string][]).map(([period, label]) => <button type="button" className={personalRange.period === period ? "active" : ""} aria-pressed={personalRange.period === period} key={period} onClick={() => updatePersonalRange({ ...personalRange, period })}>{label}</button>)}</div>
           {personalRange.period === "custom" && <div className="chart-range-dates">
             <label>开始<input type="date" value={personalRange.from} onChange={(event) => { const from = event.target.value; if (from) updatePersonalRange({ ...personalRange, from, to: personalRange.to !== 'now' && from > personalRange.to ? from : personalRange.to }); }} /></label>
-            <div className="chart-range-end"><label>结束<input type="date" value={personalRange.to === 'now' ? chartDate(0) : personalRange.to} onChange={(event) => { const to = event.target.value; if (to) updatePersonalRange({ ...personalRange, from: to < personalRange.from ? to : personalRange.from, to }); }} /></label><button type="button" className={personalRange.to === 'now' ? 'active' : ''} aria-pressed={personalRange.to === 'now'} onClick={() => updatePersonalRange({ ...personalRange, to: 'now' })}>现在</button></div>
+            <label>结束{personalRange.to === 'now'
+              ? <span className="chart-range-live">现在 · 实时更新</span>
+              : <input type="date" value={personalRange.to} onChange={(event) => { const to = event.target.value; if (to) updatePersonalRange({ ...personalRange, from: to < personalRange.from ? to : personalRange.from, to }); }} />}</label>
+            <button type="button" className="chart-range-now-toggle" role="switch" aria-checked={personalRange.to === 'now'} onClick={() => updatePersonalRange({ ...personalRange, to: personalRange.to === 'now' ? chartDate(0) : 'now' })}><span>结束时间跟随现在</span><span className={`chart-switch ${personalRange.to === 'now' ? 'active' : ''}`} /></button>
           </div>}
           {personalRange.period === "custom" && personalRange.to < chartDate(0) && <div className="chart-range-warning">结束日期早于今天，新成交会被隐藏</div>}{([
           ["buyOrders", "显示买单"], ["sellOrders", "显示卖单"], ["buyAverage", "显示买入数量/均价"], ["sellAverage", "显示卖出数量/均价"],
