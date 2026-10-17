@@ -28,6 +28,7 @@ export const wallet = {
   unlockBiometric: (blob: EncryptedWallet, mnemonic: string) => call<{ addresses: string[] }>("unlockBiometric", { blob, mnemonic }),
   lock: () => call<{ ok: true }>("lock"),
   export: (blob: EncryptedWallet, password: string) => call<{ mnemonic: string }>("export", { blob, password }),
+  verifyPassword: (blob: EncryptedWallet, password: string) => call<{ ok: true }>("verifyPassword", { blob, password }),
   changePassword: (blob: EncryptedWallet, oldPassword: string, newPassword: string) => call<{ blob: EncryptedWallet }>("changePassword", { blob, oldPassword, newPassword }),
   sign: (blob: EncryptedWallet, preview: SendPreview, auth: { password?: string; biometricMnemonic?: string }) => call<{ rawHex: string }>("sign", { blob, preview, ...auth }),
 };

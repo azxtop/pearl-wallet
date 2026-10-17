@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Pearl Wallet ${version} 预发布版\n\n- Hyperliquid 行情切换为正式上线的 EntropyIO HIP-3 PEARL 永续合约（io:PRL），显示 PRL/USDC。\n- 清除原 BTC 示例行情缓存，避免切换后短暂显示旧图表。\n- 调整 Hyperliquid 价格精度，并让 K 线价格标签使用正确的计价币。\n\nSHA-256: ${hash}`,
+      body: `Pearl Wallet ${version} 预发布版\n\n- 在钱包切换菜单和 Setting 中加入“删除当前钱包”。\n- 删除加密钱包前需验证钱包名称及密码，随后清理本机密钥、指纹凭据和对应缓存。\n- Setting 中可直接移除观察地址。\n- 修正 Setting 中显示的应用版本号。\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);

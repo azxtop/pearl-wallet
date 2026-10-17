@@ -22,6 +22,8 @@ describe("wallet worker authorization and signing", () => {
     const restored = await request("restore", { mnemonic, password });
     expect(restored.error).toBeUndefined();
     const { blob, addresses } = restored.result;
+    expect((await request("verifyPassword", { blob, password: "wrong-password" })).error).toBeTruthy();
+    expect((await request("verifyPassword", { blob, password })).result).toEqual({ ok: true });
     const preview = {
       destination: addresses[1], amountGrains: "10000000", feeGrains: "200", changeGrains: "89999800",
       inputs: [{ txid: "11".repeat(32), vout: 0, valueGrains: "100000000", scriptHex: scriptForAddress(addresses[0]), poolIndex: 0 }],

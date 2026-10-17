@@ -1,4 +1,4 @@
-# Pearl Wallet 0.2.37
+# Pearl Wallet 0.2.38
 
 **官方网站：** https://pearlwallet.az1993.xyz/ · **Android 下载：** https://github.com/azxtop/pearl-wallet/releases
 
@@ -10,7 +10,7 @@ Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账�
 
 ## 已实现
 
-- 创建或导入 BIP-39 钱包，使用加密随机数生成助记词，并在本机以 PBKDF2-SHA256 与 AES-256-GCM 加密。每个钱包和观察地址可命名，通过 Wallet 页顶部切换、重命名或移除观察地址；升级时保留原有加密钱包和观察地址。
+- 创建或导入 BIP-39 钱包，使用加密随机数生成助记词，并在本机以 PBKDF2-SHA256 与 AES-256-GCM 加密。每个钱包和观察地址可命名，通过 Wallet 页顶部切换、重命名或移除。钱包可从切换菜单或 Setting 删除；删除需输入钱包名称与密码，并清理本机加密密钥、指纹凭据和对应缓存。升级时保留原有加密钱包和观察地址。
 - 进入钱包时自动尝试已启用的指纹；可在 Setting 关闭进入时解锁。每次转账仍需密码或指纹。密码修改、指纹授权和助记词备份各有独立的密码输入。
 - Android 原生 HTTP 优先请求 pearlchain.live，读取失败时改用 PearlResearch Blockbook；主浏览器同步时也从 PearlResearch 补充待确认转出。扫描前 20 个派生地址；观察模式只查询所填地址。待确认转入单独标记，待确认 UTXO 不计入可转账余额；钱包首页支持下拉刷新。
 - 每个钱包的上次余额和交易记录保存在本机，切换钱包或重启后先显示缓存并同步链上数据。缓存只用于展示，转账须等待新同步完成；离开设置页或切到后台会隐藏已显示的助记词并清空敏感输入。
@@ -34,7 +34,7 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.37-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.37-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.38-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.38-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 

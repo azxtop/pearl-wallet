@@ -137,6 +137,15 @@ async function execute(cmd: string, payload: Record<string, unknown>) {
       if (!matches) throw new Error("钱包数据不匹配");
       return { mnemonic };
     }
+    case "verifyPassword": {
+      const blob = payload.blob as EncryptedWallet;
+      const mnemonic = await decryptMnemonic(blob, String(payload.password ?? ""));
+      const derived = await derivePearlWallet(mnemonic);
+      const matches = derived.addresses[0] === blob.address;
+      for (const child of derived.children) child.privateKey?.fill(0);
+      if (!matches) throw new Error("钱包数据不匹配");
+      return { ok: true };
+    }
     case "changePassword": {
       const mnemonic = await decryptMnemonic(payload.blob as EncryptedWallet, String(payload.oldPassword ?? ""));
       const derived = await derivePearlWallet(mnemonic);

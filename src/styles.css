@@ -214,6 +214,7 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .settings-title strong { display: block; font-size: 16px; }.settings-title small { display: block; color: #8995a4; margin-top: 4px; line-height: 1.4; }
 .settings-card .field { margin-bottom: 12px; }
 .settings-card .secondary { margin-top: 15px; }
+.settings-card .delete-wallet-entry { color: #a4433e; border-color: #efd9d6; }
 .settings-links { display: grid; gap: 1px; margin: -4px 0 15px; }
 .settings-links a { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; color: #24364a; font-size: 14px; border-bottom: 1px solid #edf0f3; text-decoration: none; }
 .settings-links a span { color: #718093; overflow-wrap: anywhere; text-align: right; }
@@ -249,6 +250,11 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .send-address-heading button { border: 0; background: transparent; color: #277d59; font-size: 13px; font-weight: 650; padding: 2px 0 2px 12px; }
 .sheet-backdrop { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-end; justify-content: center; background: #10181599; }
 .picker-sheet { width: 100%; max-width: 640px; max-height: min(85dvh, 850px); display: flex; flex-direction: column; background: #fff; border-radius: 22px 22px 0 0; padding: 10px 18px calc(20px + env(safe-area-inset-bottom)); box-shadow: 0 -12px 35px #0b1b1420; }
+.wallet-removal-sheet { gap: 2px; overflow-y: auto; }
+.wallet-removal-warning { margin: 0 0 18px; padding: 14px; border-radius: 12px; background: #fff7f3; color: #8b453c; font-size: 13px; line-height: 1.6; }
+.wallet-removal-sheet .field { margin-bottom: 13px; }
+.wallet-removal-confirm { margin-top: 6px; background: #a4433e; border-color: #a4433e; }
+.wallet-removal-confirm:disabled { opacity: .45; }
 .source-sheet { height: min(74dvh, 750px); }
 .address-sheet { height: min(78dvh, 780px); }
 .sheet-handle { width: 38px; height: 5px; border-radius: 9px; background: #d9dedd; margin: 0 auto 18px; flex: none; }

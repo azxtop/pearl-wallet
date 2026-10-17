@@ -78,6 +78,11 @@ export function saveProfiles(store: ProfileStore, storage: Pick<Storage, "setIte
   storage.setItem(PROFILES_KEY, JSON.stringify(store));
 }
 
+export function clearLegacyWalletData(storage: Pick<Storage, "removeItem"> = localStorage): void {
+  storage.removeItem(LEGACY_WALLET_KEY);
+  storage.removeItem(LEGACY_ADDRESSES_KEY);
+}
+
 export function profileName(name: string, profiles: WalletProfile[]): string {
   const trimmed = name.trim();
   if (!trimmed || trimmed.length > 24) throw new Error("钱包名称需为 1–24 个字符");

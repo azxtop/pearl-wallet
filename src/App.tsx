@@ -15,7 +15,7 @@ import { broadcastPearlTx } from "./lib/rpc";
 import { maxSpendable, prepareSend, SEND_FEE_RATES, type SendFeeTier, type SendPreview } from "./lib/send";
 import { estimatedSpotAssetsUSDT, totalAssetBalance } from "./lib/asset-balance";
 import type { EncryptedWallet } from "./lib/keystore";
-import { BIOMETRIC_ADDRESS_KEY, loadProfiles, profileName, saveProfiles, type ProfileStore, type WalletProfile } from "./lib/profiles";
+import { BIOMETRIC_ADDRESS_KEY, clearLegacyWalletData, loadProfiles, profileName, saveProfiles, type ProfileStore, type WalletProfile } from "./lib/profiles";
 import { profileAddressChoices, loadSavedAddresses, saveSavedAddresses, type SavedAddress } from "./lib/address-book";
 import { accountStreamTicket, clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadPersonalTrades, loadMarketCandles, loadMarketOverview, loadFullDepth, loadTradeHistory, openFullDepthStream, loadWprlCandles, loadWprlOverview, loadHyperliquidCandles, loadHyperliquidOverview, loadLighterCandles, loadLighterOverview, loadAsterCandles, loadAsterOverview, openAccountStream, openMarketStream, openWprlStream, openHyperliquidStream, openLighterStream, openAsterStream, savedConnectionToken, saveConnectionToken, type AccountData, type PersonalTradeHistory, type MarketData, type MarketStreamFrame, type TradeSource, type TradeHistoryPage as TradeHistoryResult } from "./lib/safetrade";
 import { aggregateDepth, applyDepthDelta, type DepthDelta, type DepthSnapshot } from "./lib/full-depth";
@@ -56,7 +56,7 @@ function loadPersonalChartRange(): PersonalTradeRange {
 }
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.36";
+const APP_VERSION = "0.2.38";
 const PROJECT_URL = "https://pearlwallet.az1993.xyz/";
 const SOURCE_URL = "https://github.com/azxtop/pearl-wallet";
 const CONTACT_EMAIL = "az1993515909@gmail.com";
@@ -717,6 +717,9 @@ export default function App() {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [renamingProfile, setRenamingProfile] = useState(false);
   const [confirmRemoveWatch, setConfirmRemoveWatch] = useState(false);
+  const [walletRemovalOpen, setWalletRemovalOpen] = useState(false);
+  const [walletRemovalName, setWalletRemovalName] = useState("");
+  const [walletRemovalPassword, setWalletRemovalPassword] = useState("");
   const [renameInput, setRenameInput] = useState("");
   const [walletName, setWalletName] = useState("");
   const [watchInput, setWatchInput] = useState("");
@@ -1724,6 +1727,7 @@ export default function App() {
     if (!Capacitor.isNativePlatform()) return;
     let removed = false;
     const listener = NativeApp.addListener("backButton", () => {
+      if (walletRemovalOpen) { closeWalletRemoval(); return; }
       if (addressBookOpen) { setAddressBookOpen(false); return; }
       if (sourcePickerOpen) { setSourcePickerOpen(false); return; }
       if (tab === "market" && (fullBookOpen || tradeHistoryOpen)) { closeMarketDetail(); return; }
@@ -1739,7 +1743,7 @@ export default function App() {
     });
     if (removed) listener.then((handle) => handle.remove());
     return () => { removed = true; listener.then((handle) => handle.remove()); };
-  }, [tab, walletPage, profileMenuOpen, addingProfile, preview, fullBookOpen, tradeHistoryOpen, addressBookOpen, sourcePickerOpen]);
+  }, [tab, walletPage, profileMenuOpen, addingProfile, preview, fullBookOpen, tradeHistoryOpen, addressBookOpen, sourcePickerOpen, walletRemovalOpen]);
 
   useEffect(() => {
     if (!notice) return;
@@ -2006,6 +2010,56 @@ export default function App() {
     setNotice("观察地址已移除");
   }
 
+  function openWalletRemoval() {
+    if (activeProfile?.kind !== "wallet") return;
+    setWalletRemovalName(""); setWalletRemovalPassword("");
+    setProfileMenuOpen(false); setRenamingProfile(false);
+    setWalletRemovalOpen(true);
+  }
+
+  function closeWalletRemoval() {
+    if (busy) return;
+    setWalletRemovalOpen(false); setWalletRemovalName(""); setWalletRemovalPassword("");
+  }
+
+  function removeActiveWallet(event: FormEvent) {
+    event.preventDefault();
+    const target = activeProfile;
+    if (target?.kind !== "wallet" || !walletRemovalOpen) return;
+    void run(async () => {
+      if (walletRemovalName !== target.name || !walletRemovalPassword) throw new Error("请填写正确的钱包名称和密码");
+      await wallet.verifyPassword(target.blob, walletRemovalPassword);
+      if (profileStore.activeId !== target.id) return;
+      const remaining = profileStore.profiles.filter((profile) => profile.id !== target.id);
+      const sharedAddress = remaining.some((profile) => profile.kind === "wallet" && profile.blob.address === target.blob.address);
+      if (!sharedAddress && Capacitor.isNativePlatform()) await biometric.disable(target.blob.address, biometricAddress);
+      const next = remaining[0] ?? null;
+      clearLegacyWalletData();
+      walletAccessGeneration.current++;
+      walletCheckSequence.current++; walletScanSequence.current++;
+      await wallet.lock();
+      persistProfiles({ ...profileStore, profiles: remaining, activeId: next?.id ?? null });
+      setAddresses(next?.kind === "watch" ? [next.address] : next?.kind === "wallet" && !requireUnlock && next.addresses.length ? next.addresses : null);
+      if (!sharedAddress && biometricAddress === target.blob.address) {
+        try { localStorage.removeItem(BIOMETRIC_ADDRESS_KEY); } catch (failure) { console.warn("Biometric pointer cleanup failed", failure); }
+        setBiometricAddress(null);
+      }
+      const nextCache = { ...snapshotCacheRef.current };
+      delete nextCache[target.id];
+      snapshotCacheRef.current = nextCache;
+      setSnapshotCache(nextCache);
+      try { saveSnapshotCache(nextCache); } catch (failure) { console.warn("Wallet cache cleanup failed", failure); }
+      const nextPending = pendingOutgoingRef.current.filter((record) => record.profileId !== target.id);
+      pendingOutgoingRef.current = nextPending;
+      setPendingOutgoing(nextPending);
+      try { savePendingOutgoing(nextPending); } catch (failure) { console.warn("Pending transaction cleanup failed", failure); }
+      setFreshSnapshotKey(null); setSnapshotError(""); setWalletPage("home"); setTab("wallet"); setPreview(null);
+      setShowMnemonic(""); setBackupMnemonic(""); setBackupPassword(""); setPassword(""); setOldPassword(""); setFingerPassword(""); setAuthPassword("");
+      setWalletRemovalOpen(false); setWalletRemovalName(""); setWalletRemovalPassword("");
+      setAutoFingerAttempted(false); setNotice("钱包已从本机删除");
+    });
+  }
+
   function toggleUnlock() {
     const next = !requireUnlock;
     localStorage.setItem(UNLOCK_KEY, String(next));
@@ -2119,6 +2173,7 @@ export default function App() {
         <div className="profile-menu-divider" />
         {renamingProfile ? <form className="profile-rename" onSubmit={renameActiveProfile}><input aria-label="新的钱包名称" value={renameInput} maxLength={24} onChange={(event) => setRenameInput(event.target.value)} autoFocus /><button type="submit">保存名称</button><button type="button" onClick={() => setRenamingProfile(false)}>取消</button></form> : <button onClick={() => { setRenameInput(activeProfile?.name ?? ""); setRenamingProfile(true); setConfirmRemoveWatch(false); }}>重命名</button>}
         {activeProfile?.kind === "watch" && (confirmRemoveWatch ? <><button className="danger" onClick={removeActiveWatch}>确认移除观察地址</button><button onClick={() => setConfirmRemoveWatch(false)}>取消</button></> : <button className="danger" onClick={() => { setConfirmRemoveWatch(true); setRenamingProfile(false); }}>移除观察地址</button>)}
+        {activeProfile?.kind === "wallet" && <button className="danger" onClick={openWalletRemoval}>删除当前钱包</button>}
       </div>}
     </div>;
   }
@@ -2221,17 +2276,31 @@ export default function App() {
 
       {tab === "setting" && <section className="settings-page"><div className="page-title"><h1>Setting</h1></div>
         <div className="settings-card"><div className="settings-title"><Icon name="wallet" /><div><strong>地址簿</strong></div></div><button type="button" className="secondary wide" onClick={() => openAddressBook("manage")}>查看和管理地址</button></div>
+        {activeProfile?.kind === "watch" && <div className="settings-card"><div className="settings-title"><Icon name="wallet" /><div><strong>移除观察地址</strong><small>从本机移除 {activeProfile.name}</small></div></div>{confirmRemoveWatch ? <><button type="button" className="secondary wide delete-wallet-entry" onClick={removeActiveWatch}>确认移除观察地址</button><button type="button" className="secondary wide" onClick={() => setConfirmRemoveWatch(false)}>取消</button></> : <button type="button" className="secondary wide delete-wallet-entry" onClick={() => setConfirmRemoveWatch(true)}>移除观察地址</button>}</div>}
         {blob && <>
           <div className="settings-card"><div className="settings-title"><Icon name="lock" /><div><strong>进入钱包时解锁</strong></div></div><button className="secondary wide" onClick={toggleUnlock}>{requireUnlock ? "已开启 · 点击关闭" : "已关闭 · 点击开启"}</button></div>
           <div className="settings-card"><div className="settings-title"><Icon name="lock" /><div><strong>修改钱包密码</strong></div></div><form onSubmit={changePassword}><Field label="当前密码" value={oldPassword} onChange={setOldPassword} type="password" autoComplete="current-password" /><Field label="新密码" value={newPassword} onChange={setNewPassword} type="password" autoComplete="new-password" /><button className="secondary wide" disabled={busy || !oldPassword || !newPassword}>修改密码</button></form></div>
           <div className="settings-card"><div className="settings-title"><Icon name="finger" /><div><strong>指纹授权</strong></div></div>{!fingerprintEnabled && <Field label="钱包密码" value={fingerPassword} onChange={setFingerPassword} type="password" autoComplete="current-password" />}<button className="secondary wide" disabled={!biometricStatus.available || busy || (!fingerprintEnabled && !fingerPassword)} onClick={toggleBiometric}>{fingerprintEnabled ? "关闭指纹" : "启用指纹"}</button></div>
           <div className="settings-card"><div className="settings-title"><Icon name="shield" /><div><strong>助记词备份</strong></div></div><Field label="钱包密码" value={backupPassword} onChange={setBackupPassword} type="password" autoComplete="current-password" /><button className="secondary wide" disabled={busy || !backupPassword} onClick={exportMnemonic}>查看助记词</button>{showMnemonic && <div className="secret-phrase">{showMnemonic}</div>}</div>
+          <div className="settings-card"><div className="settings-title"><Icon name="wallet" /><div><strong>删除当前钱包</strong><small>从本机移除 {activeProfile?.name} 及其加密密钥和指纹凭据</small></div></div><button type="button" className="secondary wide delete-wallet-entry" onClick={openWalletRemoval}>删除当前钱包</button></div>
           {addresses && !watchMode && <button className="lock-button" onClick={lockWallet}><Icon name="lock" size={19} /> 立即锁定钱包</button>}
         </>}
         <div className="settings-card"><div className="settings-title"><Icon name="refresh" /><div><strong>版本 {APP_VERSION}</strong></div></div><button className="secondary wide" onClick={checkUpdate}>检查更新</button>{updateStatus && <p className="update-status">{updateStatus}</p>}</div>
         <div className="settings-card"><div className="settings-title"><Icon name="wallet" /><div><strong>项目与支持</strong></div></div><div className="settings-links"><a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">官方网站 <span aria-hidden="true">↗</span></a><a href={SOURCE_URL} target="_blank" rel="noopener noreferrer">GitHub 源码 <span aria-hidden="true">↗</span></a><a href={`mailto:${CONTACT_EMAIL}`}>联系邮箱 <span>{CONTACT_EMAIL}</span></a></div><div className="donation-block"><span>PRL 捐赠地址</span><button type="button" className="donation-copy" onClick={() => copy(DONATION_ADDRESS, "捐赠地址已复制")} aria-label="复制 PRL 捐赠地址"><span>{DONATION_ADDRESS}</span><Icon name="copy" size={18} /></button></div></div>
       </section>}
     </main>
+    {walletRemovalOpen && activeProfile?.kind === "wallet" && <div className="sheet-backdrop" onClick={closeWalletRemoval}>
+      <section className="picker-sheet wallet-removal-sheet" role="dialog" aria-modal="true" aria-label="删除当前钱包" onClick={(event) => event.stopPropagation()}>
+        <div className="sheet-handle" />
+        <div className="sheet-heading"><h2>删除当前钱包</h2><button type="button" disabled={busy} onClick={closeWalletRemoval}>取消</button></div>
+        <p className="wallet-removal-warning">删除后，本机保存的助记词加密副本、指纹凭据和该钱包的交易缓存将被移除。请先确认已在别处备份助记词或私钥；没有备份可能永久失去资产访问权。</p>
+        <form onSubmit={removeActiveWallet}>
+          <Field label={`输入钱包名称「${activeProfile.name}」以确认`} value={walletRemovalName} onChange={setWalletRemovalName} autoComplete="off" />
+          <Field label="钱包密码" value={walletRemovalPassword} onChange={setWalletRemovalPassword} type="password" autoComplete="current-password" />
+          <button type="submit" className="primary wallet-removal-confirm" disabled={busy || walletRemovalName !== activeProfile.name || !walletRemovalPassword}>{busy ? "正在删除…" : "永久删除此钱包"}</button>
+        </form>
+      </section>
+    </div>}
     {addressBookOpen && <div className="sheet-backdrop" onClick={() => setAddressBookOpen(false)}>
       <section className="picker-sheet address-sheet" role="dialog" aria-modal="true" aria-label="地址簿" onClick={(event) => event.stopPropagation()}>
         <div className="sheet-handle" />
