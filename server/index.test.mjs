@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import WebSocket from 'ws';
 
@@ -14,14 +15,15 @@ test('public market never includes account data; connection token gates balances
   const upstream = createServer((request, response) => {
     response.setHeader('Content-Type', 'application/json');
     const path = request.url || '';
-    if (path === '/trade/account/balances/spot') {
+    if (path.startsWith('/trade/public/') && path.includes('prlusdt')) { response.statusCode = 404; response.end('{}'); }
+    else if (path === '/trade/account/balances/spot') {
       const nonce = request.headers['x-auth-nonce'];
       const signature = createHmac('sha256', secret).update(nonce + key).digest('hex');
       if (request.headers['x-auth-apikey'] !== key || request.headers['x-auth-signature'] !== signature) {
         response.statusCode = 403;
         response.end('{}');
-      } else response.end(JSON.stringify([{ currency: 'PRL', balance: '12', locked: '1' }, { currency: 'USDT', balance: '3', locked: '0' }, { currency: 'BTC', balance: '10', locked: '0' }]));
-    } else if (path.includes('/tickers/prlusdt')) response.end(JSON.stringify({ last: '1.5', high: '2', low: '1', volume: '4', amount: '6', price_change_percent: '+5%' }));
+      } else response.end(JSON.stringify([{ currency: 'pearl', balance: '12', locked: '1' }, { currency: 'prl', balance: '0', locked: '0' }, { currency: 'USDT', balance: '3', locked: '0' }, { currency: 'BTC', balance: '10', locked: '0' }]));
+    } else if (path.includes('/tickers/pearlusdt')) response.end(JSON.stringify({ last: '1.5', high: '2', low: '1', volume: '4', amount: '6', price_change_percent: '+5%' }));
     else if (path.includes('/depth')) response.end(JSON.stringify({ asks: [['1.6', '2']], bids: [['1.4', '3']] }));
     else if (path.startsWith('/trade/market/trades?')) {
       const nonce = request.headers['x-auth-nonce'];
@@ -29,7 +31,8 @@ test('public market never includes account data; connection token gates balances
       if (request.headers['x-auth-apikey'] !== key || request.headers['x-auth-signature'] !== signature) {
         response.statusCode = 403;
         response.end('{}');
-      } else response.end(JSON.stringify([{ id: 41, market: 'prlusdt', side: 'sell', order_side: 'buy', price: '1.25', amount: '4', created_at: new Date(Date.now() - 60_000).toISOString() }]));
+      } else if (new URL(`http://test${path}`).searchParams.get('market') === 'prlusdt') response.end(JSON.stringify([{ id: 41, market: 'prlusdt', side: 'sell', order_side: 'sell', price: '1.1', amount: '2', created_at: new Date(Date.now() - 2 * 86_400_000).toISOString() }]));
+      else response.end(JSON.stringify([{ id: 41, market: 'pearlusdt', side: 'sell', order_side: 'buy', price: '1.25', amount: '4', created_at: new Date(Date.now() - 60_000).toISOString() }]));
     }
     else if (path.includes('/trades')) response.end(JSON.stringify([{ id: 1, price: '1.5', amount: '2', side: 'buy', created_at: '2026-09-27T02:56:30Z' }]));
     else if (path.includes('/k-line')) response.end(JSON.stringify([[1790477220, '1.5', '1.6', '1.4', '1.5', '2']]));
@@ -37,6 +40,9 @@ test('public market never includes account data; connection token gates balances
   });
   await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
   const dataDir = mkdtempSync(join(tmpdir(), 'pearl-safetrade-test-'));
+  const oldDb = new DatabaseSync(join(dataDir, 'accounts.sqlite'));
+  oldDb.exec('CREATE TABLE personal_trade_cache (token_hash TEXT PRIMARY KEY, payload TEXT NOT NULL, covered_from INTEGER NOT NULL, synced_at INTEGER NOT NULL)');
+  oldDb.close();
   const child = spawn(process.execPath, ['server/index.mjs'], {
     cwd: process.cwd(),
     env: { ...process.env, PEARL_SERVER_PORT: '0', PEARL_DATA_DIR: dataDir, PEARL_CREDENTIAL_KEY: randomBytes(32).toString('base64'), SAFETRADE_API_BASE: `http://127.0.0.1:${upstream.address().port}`, SAFETRADE_WS_DISABLED: '1' },
@@ -56,6 +62,7 @@ test('public market never includes account data; connection token gates balances
     const base = `http://127.0.0.1:${port}/api/safetrade`;
     const market = await (await fetch(`${base}?interval=1m`)).json();
     assert.equal(market.price, 1.5);
+    assert.equal(market.pair, 'PRL/USDT');
     assert.equal(market.depth.asks[0].price, 1.6);
     assert.equal(market.trades[0].side, 'buy');
     assert.equal(market.candles[0].volume, 2);
@@ -93,9 +100,12 @@ test('public market never includes account data; connection token gates balances
       personal = await (await fetch(`${base}/personal-trades`, { headers })).json();
     }
     assert.equal(personal.syncing, false);
-    assert.equal(personal.trades.length, 1);
-    assert.equal(personal.trades[0].side, 'buy');
+    assert.equal(personal.trades.length, 2);
+    assert.equal(personal.trades[0].side, 'sell');
+    assert.equal(personal.trades[1].side, 'buy');
+    assert.deepEqual(personal.trades.map((trade) => trade.id), ['prlusdt:41', 'pearlusdt:41']);
     assert.equal(personal.averages.buy, 1.25);
+    assert.equal(personal.averages.sell, 1.1);
     assert.equal('personalTrades' in market, false);
     const ticketResponse = await fetch(`${base}/account-stream-ticket`, { method: 'POST', headers });
     assert.equal(ticketResponse.status, 200);

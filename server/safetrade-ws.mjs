@@ -1,7 +1,7 @@
 import WebSocket from 'ws';
 import { normalizePublicTrades, normalizeTicker } from './safetrade-data.mjs';
 
-const STREAMS = ['global.tickers', 'prlusdt.depth', 'prlusdt.trades'];
+const STREAMS = ['global.tickers', 'pearlusdt.depth', 'pearlusdt.trades'];
 
 function orderBook(raw) {
   const read = (rows) => new Map((Array.isArray(rows) ? rows : []).flatMap((row) => {
@@ -88,10 +88,10 @@ export function createSafeTradeFeed({ apiBase, fetchDepth, onTicker, onDepth, on
     let data;
     try { data = JSON.parse(String(payload)); } catch { return; }
     lastMessage = Date.now();
-    const ticker = normalizeTicker(data?.['global.tickers']?.prlusdt);
+    const ticker = normalizeTicker(data?.['global.tickers']?.pearlusdt);
     if (ticker) onTicker(ticker);
-    if (Array.isArray(data?.['prlusdt.trades'])) {
-      const trades = normalizePublicTrades(data['prlusdt.trades']).filter((trade) => {
+    if (Array.isArray(data?.['pearlusdt.trades'])) {
+      const trades = normalizePublicTrades(data['pearlusdt.trades']).filter((trade) => {
         if (seenTrades.has(trade.id)) return false;
         seenTrades.add(trade.id);
         if (seenTrades.size > 500) seenTrades.delete(seenTrades.values().next().value);
@@ -99,8 +99,8 @@ export function createSafeTradeFeed({ apiBase, fetchDepth, onTicker, onDepth, on
       });
       if (trades.length) onTrades(trades);
     }
-    if (data?.['prlusdt.depth']) {
-      const delta = data['prlusdt.depth'];
+    if (data?.['pearlusdt.depth']) {
+      const delta = data['pearlusdt.depth'];
       if (syncing || !book) {
         queuedDepth.push(delta);
         if (queuedDepth.length > 1000) queuedDepth = queuedDepth.slice(-1000);

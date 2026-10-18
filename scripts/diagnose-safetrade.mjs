@@ -4,9 +4,9 @@ import { randomBytes } from 'node:crypto';
 // Run on the intended host before deploying. This makes no authenticated requests.
 const probes = [
   ['SafeTrade homepage', 'https://safe.trade/'],
-  ['PRL/USDT public trades', 'https://safe.trade/api/v2/trade/public/markets/prlusdt/trades?limit=1'],
+  ['PEARL/USDT public trades', 'https://safe.trade/api/v2/trade/public/markets/pearlusdt/trades?limit=1'],
   ['Alternative domain homepage', 'https://safetrade.com/'],
-  ['Alternative domain public trades', 'https://safetrade.com/api/v2/trade/public/markets/prlusdt/trades?limit=1'],
+  ['Alternative domain public trades', 'https://safetrade.com/api/v2/trade/public/markets/pearlusdt/trades?limit=1'],
   ['Public WebSocket upgrade', 'https://safe.trade/api/v2/websocket/public', true],
 ];
 

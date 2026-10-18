@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { fetchPersonalTrades, normalizePersonalTrade, personalTradeAverages } from './personal-trades.mjs';
+import { fetchPersonalTrades, mergePersonalTrades, normalizePersonalTrade, personalTradeAverages } from './personal-trades.mjs';
 
 test('personal trades use the account order side and volume-weighted prices', () => {
   const buy = normalizePersonalTrade({ id: 17, side: 'sell', order_side: 'buy', price: '2', amount: '3', created_at: '2026-05-25T05:20:41Z' });
@@ -21,5 +21,13 @@ test('personal trade backfill deduplicates records at time-window boundaries', a
     return [first, second];
   });
   assert.equal(calls.length, 2);
-  assert.deepEqual(trades.map((trade) => trade.id), ['1', '2']);
+  assert.deepEqual(trades.map((trade) => trade.id), ['prlusdt:1', 'prlusdt:2']);
+});
+
+test('migrated fills collapse while separate fills with the same numeric ID survive', () => {
+  const old = { id: '41', time: 100, side: 'buy', price: 1.25, amount: 4 };
+  const migrated = { ...old, id: 'pearlusdt:41' };
+  const later = { ...old, id: 'pearlusdt:41', time: 200, price: 1.5 };
+  assert.deepEqual(mergePersonalTrades([old], [migrated, later]).map((trade) => trade.id), ['pearlusdt:41', 'pearlusdt:41']);
+  assert.deepEqual(mergePersonalTrades([old], [migrated, later]).map((trade) => trade.time), [100, 200]);
 });

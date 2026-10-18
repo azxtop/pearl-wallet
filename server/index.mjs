@@ -12,7 +12,7 @@ import { createHyperliquidFanout } from './hyperliquid-fanout.mjs';
 import { createLighterFeed } from './lighter.mjs';
 import { createAsterFeed } from './aster.mjs';
 import { createTradeHistory } from './trade-history.mjs';
-import { BACKFILL_SECONDS, fetchPersonalTrades, personalTradeAverages } from './personal-trades.mjs';
+import { BACKFILL_SECONDS, fetchPersonalTrades, mergePersonalTrades, personalTradeAverages } from './personal-trades.mjs';
 
 const HOST = process.env.PEARL_SERVER_HOST || '127.0.0.1';
 const PORT = Number(process.env.PEARL_SERVER_PORT || 8787);
@@ -20,6 +20,11 @@ if (!['127.0.0.1', '::1', 'localhost'].includes(HOST) && process.env.PEARL_ALLOW
   throw new Error('Public bind requires a reverse proxy with HTTPS');
 }
 const API_BASE = process.env.SAFETRADE_API_BASE || 'https://safe.trade/api/v2';
+const SAFETRADE_MARKET = 'pearlusdt';
+const SAFETRADE_LEGACY_MARKET = 'prlusdt';
+const SAFETRADE_LEGACY_END = Math.floor(Date.parse('2026-10-18T18:00:00Z') / 1000);
+// Keep the existing app protocol and trade-history key stable for installed clients.
+const SAFETRADE_COMPAT_PAIR = 'PRL/USDT';
 const DATA_DIR = resolve(process.env.PEARL_DATA_DIR || 'server/data');
 const KEY_FILE = process.env.PEARL_CREDENTIAL_KEY_FILE;
 const keyText = KEY_FILE ? readFileSync(KEY_FILE, 'utf8').trim() : process.env.PEARL_CREDENTIAL_KEY;
@@ -29,12 +34,15 @@ mkdirSync(DATA_DIR, { recursive: true });
 const tradeHistory = createTradeHistory(resolve(DATA_DIR, 'trade-history.sqlite'));
 const db = new DatabaseSync(resolve(DATA_DIR, 'accounts.sqlite'));
 db.exec('CREATE TABLE IF NOT EXISTS connections (token_hash TEXT PRIMARY KEY, credentials TEXT NOT NULL, created_at INTEGER NOT NULL)');
-db.exec('CREATE TABLE IF NOT EXISTS personal_trade_cache (token_hash TEXT PRIMARY KEY, payload TEXT NOT NULL, covered_from INTEGER NOT NULL, synced_at INTEGER NOT NULL)');
+db.exec('CREATE TABLE IF NOT EXISTS personal_trade_cache (token_hash TEXT PRIMARY KEY, payload TEXT NOT NULL, covered_from INTEGER NOT NULL, synced_at INTEGER NOT NULL, legacy_complete INTEGER NOT NULL DEFAULT 0)');
+if (!db.prepare('PRAGMA table_info(personal_trade_cache)').all().some((column) => column.name === 'legacy_complete')) {
+  db.exec('ALTER TABLE personal_trade_cache ADD COLUMN legacy_complete INTEGER NOT NULL DEFAULT 0');
+}
 const insertConnection = db.prepare('INSERT INTO connections(token_hash, credentials, created_at) VALUES(?, ?, ?)');
 const findConnection = db.prepare('SELECT credentials FROM connections WHERE token_hash = ?');
 const deleteConnection = db.prepare('DELETE FROM connections WHERE token_hash = ?');
-const findPersonalTrades = db.prepare('SELECT payload, covered_from, synced_at FROM personal_trade_cache WHERE token_hash = ?');
-const savePersonalTrades = db.prepare('INSERT INTO personal_trade_cache(token_hash, payload, covered_from, synced_at) VALUES(?, ?, ?, ?) ON CONFLICT(token_hash) DO UPDATE SET payload=excluded.payload, covered_from=excluded.covered_from, synced_at=excluded.synced_at');
+const findPersonalTrades = db.prepare('SELECT payload, covered_from, synced_at, legacy_complete FROM personal_trade_cache WHERE token_hash = ?');
+const savePersonalTrades = db.prepare('INSERT INTO personal_trade_cache(token_hash, payload, covered_from, synced_at, legacy_complete) VALUES(?, ?, ?, ?, ?) ON CONFLICT(token_hash) DO UPDATE SET payload=excluded.payload, covered_from=excluded.covered_from, synced_at=excluded.synced_at, legacy_complete=excluded.legacy_complete');
 const deletePersonalTrades = db.prepare('DELETE FROM personal_trade_cache WHERE token_hash = ?');
 
 const ALLOWED_ORIGINS = new Set(['http://localhost', 'https://localhost', 'http://localhost:5173', 'http://127.0.0.1:5173', 'https://pearlwallet.az1993.xyz']);
@@ -91,7 +99,7 @@ function broadcast(frame) {
 function updateOverview(change) {
   const previous = liveOverview || marketCache.get('overview')?.value;
   liveOverview = {
-    pair: 'PRL/USDT', price: null, stats24h: null,
+    pair: SAFETRADE_COMPAT_PAIR, price: null, stats24h: null,
     depth: { asks: [], bids: [] }, trades: [], marketError: null,
     ...previous, ...change, updatedAt: Date.now(),
   };
@@ -133,7 +141,7 @@ function broadcastMarketDepth(source, depth, updatedAt) {
 
 const publicFeed = createSafeTradeFeed({
   apiBase: API_BASE,
-  fetchDepth: () => fetchJson('/trade/public/markets/prlusdt/depth?limit=200'),
+  fetchDepth: () => fetchJson(`/trade/public/markets/${SAFETRADE_MARKET}/depth?limit=200`),
   onTicker: (ticker) => updateOverview({ price: ticker.price, stats24h: ticker.stats24h }),
   onDepth: (depth) => updateOverview({ depth }),
   onFullDepth: (frame) => {
@@ -146,7 +154,7 @@ const publicFeed = createSafeTradeFeed({
     }
   },
   onTrades: (trades) => {
-    tradeHistory.add('safetrade', 'PRL/USDT', trades);
+    tradeHistory.add('safetrade', SAFETRADE_COMPAT_PAIR, trades);
     const existing = liveOverview?.trades || marketCache.get('overview')?.value?.trades || [];
     const merged = [...trades, ...existing.filter((row) => !trades.some((trade) => trade.id === row.id))]
       .sort((a, b) => b.time - a.time).slice(0, 20);
@@ -205,7 +213,7 @@ const asterFeed = createAsterFeed({
 });
 
 function selectedMarket(source) {
-  if (source === 'safetrade') return 'PRL/USDT';
+  if (source === 'safetrade') return SAFETRADE_COMPAT_PAIR;
   if (source === 'hyperliquid') return hyperliquidFeed.contract()?.pair ?? null;
   if (source === 'lighter') return lighterFeed.contract()?.marketId == null ? null : String(lighterFeed.contract().marketId);
   if (source === 'aster') return 'PEARL/USDT';
@@ -285,7 +293,7 @@ function candleData(interval) {
   const timeFrom = now - period * 60 * 301;
   const query = new URLSearchParams({ period: String(period), time_from: String(timeFrom), time_to: String(now), limit: '300' });
   return cached(`candles:${interval}`, 10_000, async () => {
-    const rows = await fetchJson(`/trade/public/markets/prlusdt/k-line?${query}`);
+    const rows = await fetchJson(`/trade/public/markets/${SAFETRADE_MARKET}/k-line?${query}`);
     if (!Array.isArray(rows)) throw new Error('Invalid candles');
     return { interval, candles: rows.map(normalizeCandle).filter(Boolean).sort((a, b) => a.time - b.time), updatedAt: Date.now() };
   });
@@ -294,17 +302,17 @@ function candleData(interval) {
 function overviewData() {
   return cached('overview', 5_000, async () => {
     const results = await Promise.allSettled([
-      fetchJson('/trade/public/tickers/prlusdt').then(normalizeTicker),
-      fetchJson('/trade/public/markets/prlusdt/depth?limit=10').then(normalizeDepth),
-      fetchJson('/trade/public/markets/prlusdt/trades?limit=20').then(normalizePublicTrades),
+      fetchJson(`/trade/public/tickers/${SAFETRADE_MARKET}`).then(normalizeTicker),
+      fetchJson(`/trade/public/markets/${SAFETRADE_MARKET}/depth?limit=10`).then(normalizeDepth),
+      fetchJson(`/trade/public/markets/${SAFETRADE_MARKET}/trades?limit=20`).then(normalizePublicTrades),
     ]);
     if (results.every((item) => item.status === 'rejected')) throw new Error('Market unavailable');
-    if (results[2].status === 'fulfilled') tradeHistory.add('safetrade', 'PRL/USDT', results[2].value);
+    if (results[2].status === 'fulfilled') tradeHistory.add('safetrade', SAFETRADE_COMPAT_PAIR, results[2].value);
     const value = (index, fallback) => results[index].status === 'fulfilled' ? results[index].value : fallback;
     const previous = marketCache.get('overview')?.value;
     const ticker = value(0, null);
     return {
-      pair: 'PRL/USDT', price: ticker?.price ?? previous?.price ?? null, stats24h: ticker?.stats24h ?? previous?.stats24h ?? null,
+      pair: SAFETRADE_COMPAT_PAIR, price: ticker?.price ?? previous?.price ?? null, stats24h: ticker?.stats24h ?? previous?.stats24h ?? null,
       depth: value(1, previous?.depth ?? { asks: [], bids: [] }), trades: value(2, previous?.trades ?? []),
       marketError: results.some((item) => item.status === 'rejected') ? '部分行情暂不可用' : null,
       updatedAt: Date.now(),
@@ -321,7 +329,7 @@ async function marketData(interval) {
   const series = value(1, null);
   if (!overview && !series?.candles.length) throw new Error('Market unavailable');
   return {
-    pair: 'PRL/USDT', interval,
+    pair: SAFETRADE_COMPAT_PAIR, interval,
     price: overview?.price ?? series?.candles.at(-1)?.close ?? null,
     stats24h: overview?.stats24h ?? null,
     depth: overview?.depth ?? { asks: [], bids: [] },
@@ -339,7 +347,7 @@ function balancesOnly(data) {
     const row = values.get(symbol);
     return { available: String(row?.balance ?? '0'), locked: String(row?.locked ?? '0') };
   };
-  return { PRL: asset('PRL'), USDT: asset('USDT') };
+  return { PRL: asset(values.has('PEARL') ? 'PEARL' : 'PRL'), USDT: asset('USDT') };
 }
 
 async function accountData(token, force = false) {
@@ -361,17 +369,23 @@ function syncPersonalTradeHistory(hash, credentials) {
   const pending = (async () => {
     const now = Math.floor(Date.now() / 1000);
     const cached = findPersonalTrades.get(hash);
-    const from = cached ? Math.max(now - BACKFILL_SECONDS, Math.floor(cached.synced_at / 1000) - 3600) : now - BACKFILL_SECONDS;
+    const cachedTrades = cached ? decrypt(cached.payload) : [];
+    const hasUnqualifiedIds = cachedTrades.some((trade) => !/^(prlusdt|pearlusdt):/.test(trade.id));
+    const from = !cached || hasUnqualifiedIds ? now - BACKFILL_SECONDS
+      : Math.max(now - BACKFILL_SECONDS, Math.floor(cached.synced_at / 1000) - 3600);
     const { key, secret } = decrypt(credentials);
-    const incoming = await fetchPersonalTrades(from, now, ({ from: start, to: end, page, limit }) => {
-      const query = new URLSearchParams({ market: 'prlusdt', time_from: String(start), time_to: String(end), page: String(page), limit: String(limit), ordering: 'asc' });
+    const fetchMarketTrades = (market) => ({ from: start, to: end, page, limit }) => {
+      const query = new URLSearchParams({ market, time_from: String(start), time_to: String(end), page: String(page), limit: String(limit), ordering: 'asc' });
       return fetchJson(`/trade/market/trades?${query}`, authHeaders(key, secret));
-    });
+    };
+    const incoming = await fetchPersonalTrades(from, now, fetchMarketTrades(SAFETRADE_MARKET), SAFETRADE_MARKET);
+    const legacyFrom = Math.max(now - BACKFILL_SECONDS, cached?.covered_from ?? now - BACKFILL_SECONDS);
+    const legacyTo = Math.min(now, SAFETRADE_LEGACY_END);
+    const legacy = (!cached?.legacy_complete || hasUnqualifiedIds) && legacyFrom < legacyTo
+      ? await fetchPersonalTrades(legacyFrom, legacyTo, fetchMarketTrades(SAFETRADE_LEGACY_MARKET), SAFETRADE_LEGACY_MARKET) : [];
     if (!findConnection.get(hash)) return;
-    const trades = new Map((cached ? decrypt(cached.payload) : []).map((trade) => [trade.id, trade]));
-    for (const trade of incoming) trades.set(trade.id, trade);
-    const ordered = [...trades.values()].sort((a, b) => a.time - b.time || a.id.localeCompare(b.id));
-    savePersonalTrades.run(hash, encrypt(ordered), cached?.covered_from ?? from, Date.now());
+    const ordered = mergePersonalTrades(cachedTrades, legacy, incoming);
+    savePersonalTrades.run(hash, encrypt(ordered), cached?.covered_from ?? from, Date.now(), 1);
     personalTradeRetryAt.delete(hash);
   })().catch((error) => {
     personalTradeRetryAt.set(hash, Date.now() + 30_000);
@@ -507,7 +521,7 @@ async function handle(request, response) {
     if (!market) return json(response, 503, { error: '市场正在同步' });
     try {
       const data = tradeHistory.query(source, market, Object.fromEntries(url.searchParams));
-      return json(response, 200, { ...data, pair: source === 'lighter' ? lighterFeed.contract().pair : market, source });
+      return json(response, 200, { ...data, pair: source === 'lighter' ? lighterFeed.contract().pair : source === 'safetrade' ? 'PEARL/USDT' : market, source });
     } catch (error) { return json(response, 400, { error: error.message }); }
   }
   if (request.method === 'GET' && url.pathname === '/api/wprl/overview') {

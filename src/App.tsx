@@ -56,7 +56,7 @@ function loadPersonalChartRange(): PersonalTradeRange {
 }
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.38";
+const APP_VERSION = "0.2.39";
 const PROJECT_URL = "https://pearlwallet.az1993.xyz/";
 const SOURCE_URL = "https://github.com/azxtop/pearl-wallet";
 const CONTACT_EMAIL = "az1993515909@gmail.com";
@@ -637,7 +637,7 @@ export default function App() {
   const overview = publicMarket.overview;
   const exchangeError = candleError || overviewError;
   const exchange: MarketData | null = overview || currentSeries ? {
-    pair: "PRL/USDT", price: overview?.price ?? currentSeries?.candles.at(-1)?.close ?? null,
+    pair: "PEARL/USDT", price: overview?.price ?? currentSeries?.candles.at(-1)?.close ?? null,
     stats24h: overview?.stats24h ?? null, candles: currentSeries?.candles ?? [],
     depth: overview?.depth ?? { asks: [], bids: [] }, trades: overview?.trades ?? [],
     marketError: overview?.marketError ?? null, updatedAt: Math.max(overview?.updatedAt ?? 0, currentSeries?.updatedAt ?? 0),
@@ -685,7 +685,7 @@ export default function App() {
     : activeSeries?.candles ?? [];
   const activeMarketError = isAster ? asterError : isLighter ? lighterError : isHyperliquid ? hyperliquidError : isWprl ? wprlError : exchangeError;
   const hyperliquidCoin = hyperliquidOverview?.contract?.coin ?? "PRL";
-  const activeSymbol = isAster ? "PEARL" : isLighter ? "PRL" : isHyperliquid ? hyperliquidCoin : isWprl ? "WPRL" : "PRL";
+  const activeSymbol = isAster ? "PEARL" : isLighter ? "PRL" : isHyperliquid ? hyperliquidCoin : isWprl ? "WPRL" : "PEARL";
   const activeQuote = isLighter ? "USDC" : isHyperliquid ? hyperliquidOverview?.contract?.quote ?? "USDC" : "USDT";
   const isPerp = isHyperliquid || isLighter || isAster;
   const perpOverview = isAster ? asterOverview : isLighter ? lighterOverview : hyperliquidOverview;
@@ -2150,7 +2150,7 @@ export default function App() {
   }
 
   const sourceOptions: { id: MarketSource; pair: string; venue: string; category: "spot" | "perp" | "chain"; market: MarketData | null }[] = [
-    { id: "safetrade", pair: "PRL/USDT", venue: "SafeTrade · 现货", category: "spot", market: exchange },
+    { id: "safetrade", pair: "PEARL/USDT", venue: "SafeTrade · 现货", category: "spot", market: exchange },
     { id: "wprl", pair: "WPRL/USDT", venue: "Uniswap · 链上", category: "chain", market: wprlExchange },
     { id: "hyperliquid", pair: `${hyperliquidCoin}/${hyperliquidOverview?.contract?.quote ?? "USDC"}`, venue: "Hyperliquid · 永续", category: "perp", market: hyperliquidExchange },
     { id: "lighter", pair: "PRL/USDC", venue: "Lighter · 永续", category: "perp", market: lighterExchange },
@@ -2269,7 +2269,7 @@ export default function App() {
 {isWprl ? <><div className="market-tabs market-tabs-static"><strong>链上成交</strong><a href="https://www.geckoterminal.com/eth/pools/0x89a67c6dee35db9815da2fb9191f0998a8b37c39" target="_blank" rel="noreferrer">查看交易池 ↗</a></div><RecentTrades trades={wprlExchange?.trades} symbol="WPRL" /><div className="wprl-source-note">{wprlSeries?.source === "provider" ? "历史 K 线来自 GeckoTerminal" : wprlSeries?.source === "mixed" ? "起点前 K 线为外部参考，此后持续记录" : "K 线由服务器持续记录"}{(wprlSeries?.recordingSince || wprlOverview?.recordingSince) ? ` · ${new Date((wprlSeries?.recordingSince || wprlOverview?.recordingSince)!).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} 起` : ""}</div></> : <><div className="market-tabs"><button className={marketDetails === "depth" ? "active" : ""} onClick={() => setMarketDetails("depth")}>订单簿</button><button className={marketDetails === "trades" ? "active" : ""} onClick={() => setMarketDetails("trades")}>最新成交</button><button type="button" className="full-book-entry" onClick={marketDetails === "depth" ? openFullBook : openTradeHistory}>{marketDetails === "depth" ? "查看完整盘口 ›" : "查看更多成交 ›"}</button></div>{marketDetails === "depth" ? <OrderBook depth={activeExchange?.depth} symbol={activeSymbol} quote={activeQuote} /> : <RecentTrades trades={activeExchange?.trades} symbol={activeSymbol} quote={activeQuote} />}{isPerp && <div className="wprl-source-note">{perpTradeSample > 0 ? `高负载模式：最近成交抽样展示，跳过 ${perpTradeSample} 笔 · ` : ""}K 线由服务器持续记录{perpRecordingSince ? ` · ${new Date(perpRecordingSince! * 1000).toLocaleDateString("zh-CN")} 起` : ""}</div>}</>}
         {!isWprl && !isPerp && <>
         <div className="exchange-assets-head"><h2>现货资产</h2>{connectionToken && <div className="exchange-assets-actions"><button aria-label="刷新现货资产" title="刷新现货资产" onClick={refreshSafeTradeAccount}><Icon name="refresh" size={18} /></button><button aria-label="管理 SafeTrade 连接" title="管理连接" onClick={() => setAccountMenuOpen((open) => !open)}>•••</button>{accountMenuOpen && <div className="account-menu"><button onClick={() => { setAccountMenuOpen(false); void removeSafeTradeConnection(); }}>断开连接</button></div>}</div>}</div>
-        {connectionToken ? <div className="exchange-balances"><div className="exchange-total"><span>预估总资产</span><strong>{spotEstimatedUSDT === null ? "—" : `≈ ${marketNumber(spotEstimatedUSDT, 2)}`} <small>USDT</small></strong></div>{(["PRL", "USDT"] as const).map((asset) => { const balance = account?.balances[asset]; const total = balance ? totalAssetBalance(balance) : null; const approximate = total === null || (asset === "PRL" && exchange?.price == null) ? NaN : asset === "USDT" ? Number(total) : Number(total) * exchange!.price!; return <div className="asset-card" key={asset}><img className="asset-logo" src={asset === "PRL" ? "/pearl-logo.svg" : "/usdt.svg"} alt="" /><div className="asset-info"><strong>{asset}</strong>{balance && Number(balance.locked) > 0 && <small>挂单占用 {balance.locked}</small>}</div><div className="asset-values"><strong>{total ?? "—"}</strong><small>{Number.isFinite(approximate) ? `≈ ${marketNumber(approximate, 2)} USDT` : "余额待更新"}</small></div></div>; })}</div> : <form className="safetrade-connect" onSubmit={(event) => { event.preventDefault(); void connectSafeTrade(); }}><Field label="只读 API Key" value={safeKey} onChange={setSafeKey} autoComplete="off" /><Field label="API Secret" value={safeSecret} onChange={setSafeSecret} type="password" autoComplete="off" /><button className="primary" disabled={connectingSafeTrade || !safeKey.trim() || !safeSecret.trim()}>{connectingSafeTrade ? "连接中…" : "连接 SafeTrade"}</button><p>密钥仅发送到 Pearl Wallet 服务器，用于只读查询余额与个人成交。</p></form>}
+        {connectionToken ? <div className="exchange-balances"><div className="exchange-total"><span>预估总资产</span><strong>{spotEstimatedUSDT === null ? "—" : `≈ ${marketNumber(spotEstimatedUSDT, 2)}`} <small>USDT</small></strong></div>{(["PRL", "USDT"] as const).map((asset) => { const balance = account?.balances[asset]; const total = balance ? totalAssetBalance(balance) : null; const approximate = total === null || (asset === "PRL" && exchange?.price == null) ? NaN : asset === "USDT" ? Number(total) : Number(total) * exchange!.price!; return <div className="asset-card" key={asset}><img className="asset-logo" src={asset === "PRL" ? "/pearl-logo.svg" : "/usdt.svg"} alt="" /><div className="asset-info"><strong>{asset === "PRL" ? "PEARL" : asset}</strong>{balance && Number(balance.locked) > 0 && <small>挂单占用 {balance.locked}</small>}</div><div className="asset-values"><strong>{total ?? "—"}</strong><small>{Number.isFinite(approximate) ? `≈ ${marketNumber(approximate, 2)} USDT` : "余额待更新"}</small></div></div>; })}</div> : <form className="safetrade-connect" onSubmit={(event) => { event.preventDefault(); void connectSafeTrade(); }}><Field label="只读 API Key" value={safeKey} onChange={setSafeKey} autoComplete="off" /><Field label="API Secret" value={safeSecret} onChange={setSafeSecret} type="password" autoComplete="off" /><button className="primary" disabled={connectingSafeTrade || !safeKey.trim() || !safeSecret.trim()}>{connectingSafeTrade ? "连接中…" : "连接 SafeTrade"}</button><p>密钥仅发送到 Pearl Wallet 服务器，用于只读查询余额与个人成交。</p></form>}
         {accountError && <div className="inline-error">{accountError}</div>}
         </>}
       </section>}

@@ -14,8 +14,8 @@ test('SafeTrade public stream applies depth deltas by sequence and resynchronize
   upstream.on('connection', (client) => {
     upstreamClient = client;
     client.on('message', () => {
-      client.send(JSON.stringify({ 'global.tickers': { prlusdt: { last: '1.57', high: '1.6', low: '1.1' } } }));
-      client.send(JSON.stringify({ 'prlusdt.trades': [{ id: 42, price: '1.57', amount: '2', side: 'buy', created_at: '2026-09-27T06:58:02Z' }] }));
+      client.send(JSON.stringify({ 'global.tickers': { pearlusdt: { last: '1.57', high: '1.6', low: '1.1' } } }));
+      client.send(JSON.stringify({ 'pearlusdt.trades': [{ id: 42, price: '1.57', amount: '2', side: 'buy', created_at: '2026-09-27T06:58:02Z' }] }));
     });
   });
   const feed = createSafeTradeFeed({
@@ -42,12 +42,12 @@ test('SafeTrade public stream applies depth deltas by sequence and resynchronize
     assert.equal(received.trades[0].id, '42');
     assert.equal(feed.getFullDepth().sequence, 5);
     assert.equal(received.fullDepth.at(-1).type, 'depth-snapshot');
-    upstreamClient.send(JSON.stringify({ 'prlusdt.depth': { sequence: 6, asks: [['1.6', '0'], ['1.65', '5']], bids: [] } }));
+    upstreamClient.send(JSON.stringify({ 'pearlusdt.depth': { sequence: 6, asks: [['1.6', '0'], ['1.65', '5']], bids: [] } }));
     await until(() => received.depth.at(-1)?.asks[0]?.price === 1.65);
     assert.equal(received.depth.at(-1).asks.length, 1);
     assert.equal(received.fullDepth.at(-1).type, 'depth-delta');
     assert.equal(feed.getFullDepth().depth.asks[0].price, 1.65);
-    upstreamClient.send(JSON.stringify({ 'prlusdt.depth': { sequence: 8, asks: [['1.8', '1']], bids: [] } }));
+    upstreamClient.send(JSON.stringify({ 'pearlusdt.depth': { sequence: 8, asks: [['1.8', '1']], bids: [] } }));
     await until(() => snapshotCount === 2 && received.depth.at(-1)?.asks[0]?.price === 1.7);
     assert.equal(received.depth.at(-1).bids[0].price, 1.4);
     assert.equal(received.fullDepth.at(-1).type, 'depth-snapshot');

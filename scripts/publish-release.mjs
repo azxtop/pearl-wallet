@@ -32,7 +32,7 @@ else if (existing.status === 404) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Pearl Wallet ${version} 预发布版\n\n- 在钱包切换菜单和 Setting 中加入“删除当前钱包”。\n- 删除加密钱包前需验证钱包名称及密码，随后清理本机密钥、指纹凭据和对应缓存。\n- Setting 中可直接移除观察地址。\n- 修正 Setting 中显示的应用版本号。\n\nSHA-256: ${hash}`,
+      body: `Pearl Wallet ${version} 预发布版\n\n- 适配 SafeTrade PEARL/USDT 新市场，恢复实时行情、盘口、K 线和成交。\n- SafeTrade 资产显示更新为 PEARL。\n- 合并迁移前后的个人成交记录，并避免重复计入。\n\nSHA-256: ${hash}`,
     }),
   }));
 } else await checked(existing);
