@@ -1,6 +1,7 @@
 import { RPC_URL, GRAINS_PER_PRL, isValidPearlAddress } from "./pearl";
 import { bech32m } from "@scure/base";
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
+import { verifiedBroadcastId } from "./send";
 
 interface RawTx {
   txid: string;
@@ -160,7 +161,7 @@ export async function scanWallet(addresses: string[]): Promise<WalletSnapshot> {
   return { balanceGrains, utxos, activities, partial, updatedAt: Date.now() };
 }
 
-export async function broadcastPearlTx(rawHex: string): Promise<string> {
+export async function broadcastPearlTx(rawHex: string, expectedTxid: string): Promise<string> {
   if (!/^[0-9a-f]+$/i.test(rawHex)) throw new Error("签名交易格式无效");
-  return rpc<string>("sendrawtransaction", [rawHex]);
+  return verifiedBroadcastId(await rpc<unknown>("sendrawtransaction", [rawHex]), expectedTxid);
 }

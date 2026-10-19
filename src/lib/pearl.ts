@@ -83,16 +83,27 @@ export async function derivePearlWallet(mnemonicInput: string) {
   if (!isValidMnemonic(mnemonic)) throw new Error("助记词无效");
   const seed = await mnemonicToSeed(mnemonic);
   try {
-    const master = HDKey.fromMasterSeed(seed);
+    let branch = HDKey.fromMasterSeed(seed);
+    const children: HDKey[] = [];
     try {
-      const children = Array.from({ length: RECEIVE_GAP_LIMIT }, (_, index) => master.derive(receivePath(index)));
+      // Derive one level at a time so every intermediate private scalar can be
+      // destroyed. HDKey.derive(path) otherwise leaves these to garbage collection.
+      for (const index of [0x80000000 + 86, 0x80000000 + PEARL_COIN_TYPE, 0x80000000, 0]) {
+        const parent = branch;
+        try { branch = parent.deriveChild(index); }
+        finally { parent.wipePrivateData(); }
+      }
+      for (let index = 0; index < RECEIVE_GAP_LIMIT; index++) children.push(branch.deriveChild(index));
       const addresses = children.map((child) => {
         if (!child.publicKey) throw new Error("地址推导失败");
         return addressFromPublicKey(child.publicKey);
       });
       return { children, addresses };
+    } catch (error) {
+      for (const child of children) child.wipePrivateData();
+      throw error;
     } finally {
-      master.privateKey?.fill(0);
+      branch.wipePrivateData();
     }
   } finally {
     seed.fill(0);

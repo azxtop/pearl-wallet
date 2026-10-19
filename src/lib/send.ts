@@ -11,6 +11,12 @@ export interface SendPreview {
   outputs: { address: string; amountGrains: string }[];
 }
 
+export function verifiedBroadcastId(result: unknown, expectedTxid: string): string {
+  if (!/^[a-f0-9]{64}$/i.test(expectedTxid) || typeof result !== "string"
+    || result.toLowerCase() !== expectedTxid.toLowerCase()) throw new Error("广播结果与本机签名交易不一致，请先核对链上记录");
+  return expectedTxid.toLowerCase();
+}
+
 export const SEND_FEE_RATES = { economy: 1n, standard: 2n, priority: 4n } as const;
 export type SendFeeTier = keyof typeof SEND_FEE_RATES;
 const DUST = 546n;

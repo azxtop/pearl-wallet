@@ -15,7 +15,7 @@ import { broadcastPearlTx } from "./lib/rpc";
 import { maxSpendable, prepareSend, SEND_FEE_RATES, type SendFeeTier, type SendPreview } from "./lib/send";
 import { estimatedSpotAssetsUSDT, totalAssetBalance } from "./lib/asset-balance";
 import type { EncryptedWallet } from "./lib/keystore";
-import { BIOMETRIC_ADDRESS_KEY, clearLegacyWalletData, loadProfiles, profileName, saveProfiles, type ProfileStore, type WalletProfile } from "./lib/profiles";
+import { BIOMETRIC_ADDRESS_KEY, clearMatchingLegacyWallet, initialProfiles, loadProfiles, profileName, profileRecoveryData, ProfileStorageError, saveProfiles, type ProfileStore, type WalletProfile } from "./lib/profiles";
 import { profileAddressChoices, loadSavedAddresses, saveSavedAddresses, type SavedAddress } from "./lib/address-book";
 import { accountStreamTicket, clearConnectionToken, connectAccount, disconnectAccount, loadAccount, loadPersonalTrades, loadMarketCandles, loadMarketOverview, loadFullDepth, loadTradeHistory, openFullDepthStream, loadWprlCandles, loadWprlOverview, loadHyperliquidCandles, loadHyperliquidOverview, loadLighterCandles, loadLighterOverview, loadAsterCandles, loadAsterOverview, openAccountStream, openMarketStream, openWprlStream, openHyperliquidStream, openLighterStream, openAsterStream, savedConnectionToken, saveConnectionToken, type AccountData, type PersonalTradeHistory, type MarketData, type MarketStreamFrame, type TradeSource, type TradeHistoryPage as TradeHistoryResult } from "./lib/safetrade";
 import { aggregateDepth, applyDepthDelta, type DepthDelta, type DepthSnapshot } from "./lib/full-depth";
@@ -23,6 +23,7 @@ import { chartWindow } from "./lib/chart-window";
 import { displayLighterCandles } from "./lib/chart-candles";
 import { loadPublicMarketCache, loadWprlMarketCache, loadHyperliquidMarketCache, loadLighterMarketCache, loadAsterMarketCache, MARKET_INTERVALS, savePublicMarketCache, saveWprlMarketCache, saveHyperliquidMarketCache, saveLighterMarketCache, saveAsterMarketCache, type MarketInterval } from "./lib/market-cache";
 import { screenPrivacy } from "./lib/screen-privacy";
+import { observeWalletLifecycle } from "./lib/wallet-lifecycle";
 import { filterPersonalTrades, groupPersonalTrades, summarizePersonalTrades, type PersonalTradeRange } from "./lib/personal-chart";
 
 type Tab = "wallet" | "market" | "setting";
@@ -56,7 +57,7 @@ function loadPersonalChartRange(): PersonalTradeRange {
 }
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.39";
+const APP_VERSION = "0.2.41";
 const PROJECT_URL = "https://pearlwallet.az1993.xyz/";
 const SOURCE_URL = "https://github.com/azxtop/pearl-wallet";
 const CONTACT_EMAIL = "az1993515909@gmail.com";
@@ -555,14 +556,15 @@ function RecentTrades({ trades, symbol = "PRL", quote = "USDT", showDate = false
 }
 
 export default function App() {
-  const [profileStore, setProfileStore] = useState<ProfileStore>(loadProfiles);
+  const [startupProfiles] = useState(initialProfiles);
+  const [profileStore, setProfileStore] = useState<ProfileStore>(startupProfiles.store);
+  const [profileStorageError, setProfileStorageError] = useState(startupProfiles.error);
   const activeProfile = profileStore.profiles.find((profile) => profile.id === profileStore.activeId) ?? null;
   const blob: EncryptedWallet | null = activeProfile?.kind === "wallet" ? activeProfile.blob : null;
   const watchMode = activeProfile?.kind === "watch";
   const [requireUnlock, setRequireUnlock] = useState(() => localStorage.getItem(UNLOCK_KEY) !== "false");
   const [addresses, setAddresses] = useState<string[] | null>(() => {
-    const store = loadProfiles();
-    const active = store.profiles.find((profile) => profile.id === store.activeId);
+    const active = startupProfiles.store.profiles.find((profile) => profile.id === startupProfiles.store.activeId);
     if (active?.kind === "watch") return [active.address];
     return localStorage.getItem(UNLOCK_KEY) === "false" && active?.kind === "wallet" && active.addresses.length ? active.addresses : null;
   });
@@ -764,6 +766,11 @@ export default function App() {
   const backupRevealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const secretRevealSequence = useRef(0);
   const walletAccessGeneration = useRef(0);
+  const walletOperationSequence = useRef(0);
+  const walletBackground = useRef(document.hidden);
+  const watchModeRef = useRef(watchMode);
+  watchModeRef.current = watchMode;
+  const [walletForeground, setWalletForeground] = useState(!document.hidden);
   const activeTab = useRef(tab);
   const [pullDistance, setPullDistance] = useState(0);
   const pullStart = useRef<number | null>(null);
@@ -771,15 +778,49 @@ export default function App() {
   activeTab.current = tab;
   const fingerprintEnabled = !!blob && biometricStatus.address === blob.address && biometricStatus.enabled;
 
+  const clearWalletSecrets = useCallback(() => {
+    walletOperationSequence.current++;
+    secretRevealSequence.current++;
+    setShowMnemonic(""); setBackupMnemonic(""); setBackupCheck("");
+    setPassword(""); setPasswordAgain(""); setInputMnemonic("");
+    setBackupPassword(""); setFingerPassword(""); setOldPassword(""); setNewPassword("");
+    setAuthPassword(""); setWalletRemovalPassword(""); setWalletRemovalOpen(false);
+    setPreview(null); setPreviewScanSequence(null); setBusy(false);
+    if (backupRevealTimer.current) clearTimeout(backupRevealTimer.current);
+    backupRevealTimer.current = null;
+  }, []);
+
+  function accessCurrent(generation: number) {
+    return generation === walletAccessGeneration.current && !walletBackground.current && !document.hidden;
+  }
+
   function persistProfiles(next: ProfileStore) {
-    saveProfiles(next);
+    try { saveProfiles(next); }
+    catch (failure) {
+      if (failure instanceof ProfileStorageError) {
+        walletAccessGeneration.current++;
+        void wallet.lock(); clearWalletSecrets();
+        setProfileStorageError(failure.message);
+      }
+      throw failure;
+    }
     setProfileStore(next);
   }
 
+  function cleanupLegacyAfterAuthorization(verifiedBlob: EncryptedWallet): boolean {
+    try { clearMatchingLegacyWallet(verifiedBlob); return true; }
+    catch {
+      setNotice("当前钱包可用，但旧版加密副本未能清理。请稍后解锁重试；不要清除应用数据。");
+      return false;
+    }
+  }
+
   const run = useCallback(async (action: () => Promise<void>) => {
+    const operation = ++walletOperationSequence.current;
     setBusy(true); setError(""); setNotice("");
-    try { await action(); } catch (failure) { setError(failure instanceof Error ? failure.message : "操作失败"); }
-    finally { setBusy(false); }
+    try { await action(); } catch (failure) {
+      if (operation === walletOperationSequence.current) setError(failure instanceof Error ? failure.message : "操作失败");
+    } finally { if (operation === walletOperationSequence.current) setBusy(false); }
   }, []);
 
   const refreshWallet = useCallback(async (profileId: string, pool: string[], forceFull = true, urgent = false) => {
@@ -1157,8 +1198,8 @@ export default function App() {
       ...profileStore,
       profiles: profileStore.profiles.map((profile) => profile.id === activeProfile.id && profile.kind === "wallet" ? { ...profile, addresses } : profile),
     };
-    saveProfiles(next);
-    setProfileStore(next);
+    try { persistProfiles(next); }
+    catch (failure) { if (!(failure instanceof ProfileStorageError)) setError("钱包地址缓存保存失败，请检查本机储存空间"); }
   }, [activeProfile, addresses, profileStore]);
 
   useEffect(() => {
@@ -1758,40 +1799,37 @@ export default function App() {
   }, [error]);
 
   useEffect(() => {
-    if (!blob || addresses || !fingerprintEnabled || autoFingerAttempted || tab !== "wallet" || addingProfile) return;
+    if (!walletForeground || document.hidden || !blob || addresses || !fingerprintEnabled || autoFingerAttempted || tab !== "wallet" || addingProfile) return;
     const generation = walletAccessGeneration.current;
     setAutoFingerAttempted(true);
     biometric.authenticate(blob.address, biometricAddress).then(async ({ mnemonic }) => {
-      if (generation !== walletAccessGeneration.current) return;
+      if (!accessCurrent(generation)) return;
       const { addresses: unlocked } = await wallet.unlockBiometric(blob, mnemonic);
-      if (generation === walletAccessGeneration.current) setAddresses(unlocked);
+      if (accessCurrent(generation)) { setAddresses(unlocked); cleanupLegacyAfterAuthorization(blob); }
     })
       .catch(() => {});
-  }, [blob, addresses, fingerprintEnabled, autoFingerAttempted, tab, addingProfile]);
+  }, [blob, addresses, fingerprintEnabled, autoFingerAttempted, tab, addingProfile, walletForeground]);
 
   useEffect(() => {
-    let hiddenAt = 0;
-    const onVisibility = () => {
-      if (document.hidden) {
-        hiddenAt = Date.now();
-        secretRevealSequence.current++;
-        setShowMnemonic(""); setBackupPassword(""); setFingerPassword("");
-        setOldPassword(""); setNewPassword(""); setAuthPassword("");
-        setPassword(""); setInputMnemonic("");
-        if (backupRevealTimer.current) clearTimeout(backupRevealTimer.current);
-      }
-      else if (hiddenAt && Date.now() - hiddenAt > 30_000) {
+    return observeWalletLifecycle(
+      () => {
+        walletBackground.current = true;
+        setWalletForeground(false);
         walletAccessGeneration.current++;
-        wallet.lock();
-        if (localStorage.getItem(UNLOCK_KEY) !== "false" && !watchMode) {
-          setAddresses(null); setFreshSnapshotKey(null); setAutoFingerAttempted(false);
+        void wallet.lock();
+        clearWalletSecrets();
+        if (localStorage.getItem(UNLOCK_KEY) !== "false" && !watchModeRef.current) {
+          setAddresses(null); setFreshSnapshotKey(null);
         }
-        setWalletPage("home"); setPreview(null); setShowMnemonic("");
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [watchMode]);
+        setWalletPage("home"); setAutoFingerAttempted(true);
+      },
+      () => {
+        walletBackground.current = false;
+        setWalletForeground(true);
+        setAutoFingerAttempted(false);
+      },
+    );
+  }, [clearWalletSecrets]);
 
   useEffect(() => {
     if (walletPage !== "receive" || !addresses?.[0]) return;
@@ -1800,6 +1838,7 @@ export default function App() {
 
   async function createOrRestore(event: FormEvent) {
     event.preventDefault();
+    const generation = walletAccessGeneration.current;
     await run(async () => {
       const name = profileName(walletName, profileStore.profiles);
       let nextProfile: WalletProfile;
@@ -1812,11 +1851,14 @@ export default function App() {
         if (password !== passwordAgain) throw new Error("两次输入的密码不一致");
         if (setupMode === "create") {
           const result = await wallet.create(password);
+          if (!accessCurrent(generation)) return;
           nextProfile = { id: crypto.randomUUID(), name, kind: "wallet", blob: result.blob, addresses: result.addresses };
           await screenPrivacy.setSecure(true);
+          if (!accessCurrent(generation)) return;
           setBackupMnemonic(result.mnemonic);
         } else {
           const result = await wallet.restore(inputMnemonic, password);
+          if (!accessCurrent(generation)) return;
           nextProfile = { id: crypto.randomUUID(), name, kind: "wallet", blob: result.blob, addresses: result.addresses };
           setInputMnemonic("");
           setNotice("钱包已导入，正在同步链上余额");
@@ -1838,7 +1880,7 @@ export default function App() {
     const generation = walletAccessGeneration.current;
     await run(async () => {
       const result = await wallet.unlock(blob, password);
-      if (generation === walletAccessGeneration.current) setAddresses(result.addresses);
+      if (accessCurrent(generation)) { setAddresses(result.addresses); cleanupLegacyAfterAuthorization(blob); }
       setPassword("");
     });
   }
@@ -1848,9 +1890,9 @@ export default function App() {
     const generation = walletAccessGeneration.current;
     await run(async () => {
       const result = await biometric.authenticate(blob.address, biometricAddress);
-      if (generation !== walletAccessGeneration.current) return;
+      if (!accessCurrent(generation)) return;
       const unlocked = await wallet.unlockBiometric(blob, result.mnemonic);
-      if (generation === walletAccessGeneration.current) setAddresses(unlocked.addresses);
+      if (accessCurrent(generation)) { setAddresses(unlocked.addresses); cleanupLegacyAfterAuthorization(blob); }
     });
   }
 
@@ -1878,15 +1920,16 @@ export default function App() {
       if (!snapshotFresh || snapshotError || snapshot?.partial || previewScanSequence !== walletScanSequence.current) throw new Error("链上余额已变化，请重新预览转账");
       if (useFinger && !fingerprintEnabled) throw new Error("当前钱包尚未启用指纹");
       const auth = useFinger ? { biometricMnemonic: (await biometric.authenticate(blob.address, biometricAddress)).mnemonic } : { password: authPassword };
-      if (generation !== walletAccessGeneration.current) return;
+      if (!accessCurrent(generation)) return;
       const signed = await wallet.sign(blob, preview, auth);
-      if (generation !== walletAccessGeneration.current) return;
+      if (!accessCurrent(generation)) return;
       if (previewScanSequence !== walletScanSequence.current) throw new Error("链上余额已变化，请重新预览转账");
       let txid: string;
-      try { txid = await broadcastPearlTx(signed.rawHex); }
+      try { txid = await broadcastPearlTx(signed.rawHex, signed.txid); }
       catch (failure) {
         if (!(failure instanceof Error) || !/Pearl 节点 (?:连接失败|HTTP (?:429|5\d\d))/.test(failure.message)) throw failure;
-        txid = await broadcastViaExplorer(signed.rawHex);
+        if (!accessCurrent(generation)) return;
+        txid = await broadcastViaExplorer(signed.rawHex, signed.txid);
       }
       if (activeProfile) {
         try {
@@ -1905,17 +1948,23 @@ export default function App() {
 
   function lockWallet() {
     walletAccessGeneration.current++;
-    wallet.lock(); setAddresses(null); setFreshSnapshotKey(null); setWalletPage("home"); setPreview(null); setShowMnemonic(""); setAutoFingerAttempted(true);
+    void wallet.lock(); clearWalletSecrets();
+    setAddresses(null); setFreshSnapshotKey(null); setWalletPage("home"); setAutoFingerAttempted(true);
     setTab("wallet"); setNotice("钱包已锁定");
   }
 
   async function changePassword(event: FormEvent) {
     event.preventDefault();
     if (!blob) return;
+    const generation = walletAccessGeneration.current;
     await run(async () => {
       const result = await wallet.changePassword(blob, oldPassword, newPassword);
-      persistProfiles({ ...profileStore, profiles: profileStore.profiles.map((profile) => profile.id === activeProfile?.id && profile.kind === "wallet" ? { ...profile, blob: result.blob } : profile) });
-      setOldPassword(""); setNewPassword(""); setNotice("密码已修改");
+      if (!accessCurrent(generation)) return;
+      // Re-encrypt every local entry of this same wallet, so a duplicate import
+      // cannot retain a copy protected by the old password.
+      persistProfiles({ ...profileStore, profiles: profileStore.profiles.map((profile) => profile.kind === "wallet" && profile.blob.address === blob.address ? { ...profile, blob: result.blob } : profile) });
+      setOldPassword(""); setNewPassword("");
+      if (cleanupLegacyAfterAuthorization(result.blob)) setNotice("密码已修改，同地址钱包已同步更新");
     });
   }
 
@@ -1929,15 +1978,15 @@ export default function App() {
         if (biometricAddress === address) {
           localStorage.removeItem(BIOMETRIC_ADDRESS_KEY); setBiometricAddress(null);
         }
-        if (generation !== walletAccessGeneration.current) return;
+        if (!accessCurrent(generation)) return;
         setBiometricStatus({ address, available: biometricStatus.available, enabled: false });
         setNotice("已关闭指纹授权");
       } else {
         if (!fingerPassword) throw new Error("请输入钱包密码");
         const { mnemonic } = await wallet.export(blob, fingerPassword);
-        if (generation !== walletAccessGeneration.current) return;
+        if (!accessCurrent(generation)) return;
         await biometric.enable(address, mnemonic);
-        if (generation !== walletAccessGeneration.current) return;
+        if (!accessCurrent(generation)) return;
         setFingerPassword(""); setBiometricStatus({ address, available: biometricStatus.available, enabled: true });
         setNotice("已启用指纹授权");
       }
@@ -1946,12 +1995,16 @@ export default function App() {
 
   async function exportMnemonic() {
     if (!blob) return;
+    const generation = walletAccessGeneration.current;
     const revealSequence = ++secretRevealSequence.current;
     await run(async () => {
       if (!backupPassword) throw new Error("请输入钱包密码");
       const result = await wallet.export(blob, backupPassword);
-      if (document.hidden || activeTab.current !== "setting" || revealSequence !== secretRevealSequence.current) return;
+      const canReveal = () => accessCurrent(generation) && activeTab.current === "setting" && revealSequence === secretRevealSequence.current;
+      if (!canReveal()) return;
+      cleanupLegacyAfterAuthorization(blob);
       await screenPrivacy.setSecure(true);
+      if (!canReveal()) return;
       setShowMnemonic(result.mnemonic);
       setBackupPassword("");
       if (backupRevealTimer.current) clearTimeout(backupRevealTimer.current);
@@ -1963,6 +2016,7 @@ export default function App() {
     if (profile.id === profileStore.activeId) { setProfileMenuOpen(false); setRenamingProfile(false); setConfirmRemoveWatch(false); return; }
     walletAccessGeneration.current++;
     wallet.lock();
+    clearWalletSecrets();
     persistProfiles({ ...profileStore, activeId: profile.id });
     setAddresses(profile.kind === "watch" ? [profile.address] : !requireUnlock && profile.addresses.length ? profile.addresses : null);
     setFreshSnapshotKey(null); setSnapshotError(""); setWalletPage("home"); setTab("wallet");
@@ -1974,6 +2028,7 @@ export default function App() {
   function startAddingProfile(mode: "create" | "restore" | "watch") {
     walletAccessGeneration.current++;
     wallet.lock();
+    clearWalletSecrets();
     setAddresses(activeProfile?.kind === "watch" ? [activeProfile.address] : null);
     setSetupMode(mode); setAddingProfile(true); setProfileMenuOpen(false); setRenamingProfile(false); setConfirmRemoveWatch(false); setTab("wallet");
     setWalletPage("home"); setPreview(null); setPassword(""); setInputMnemonic(""); setBackupMnemonic("");
@@ -2001,6 +2056,7 @@ export default function App() {
     });
     walletAccessGeneration.current++;
     wallet.lock();
+    clearWalletSecrets();
     const remaining = profileStore.profiles.filter((profile) => profile.id !== activeProfile.id);
     const next = remaining[0] ?? null;
     persistProfiles({ ...profileStore, profiles: remaining, activeId: next?.id ?? null });
@@ -2025,19 +2081,22 @@ export default function App() {
   function removeActiveWallet(event: FormEvent) {
     event.preventDefault();
     const target = activeProfile;
+    const generation = walletAccessGeneration.current;
     if (target?.kind !== "wallet" || !walletRemovalOpen) return;
     void run(async () => {
       if (walletRemovalName !== target.name || !walletRemovalPassword) throw new Error("请填写正确的钱包名称和密码");
       await wallet.verifyPassword(target.blob, walletRemovalPassword);
-      if (profileStore.activeId !== target.id) return;
+      if (!accessCurrent(generation) || profileStore.activeId !== target.id) return;
       const remaining = profileStore.profiles.filter((profile) => profile.id !== target.id);
       const sharedAddress = remaining.some((profile) => profile.kind === "wallet" && profile.blob.address === target.blob.address);
       if (!sharedAddress && Capacitor.isNativePlatform()) await biometric.disable(target.blob.address, biometricAddress);
+      if (!accessCurrent(generation)) return;
       const next = remaining[0] ?? null;
-      clearLegacyWalletData();
+      clearMatchingLegacyWallet(target.blob);
       walletAccessGeneration.current++;
       walletCheckSequence.current++; walletScanSequence.current++;
       await wallet.lock();
+      clearWalletSecrets();
       persistProfiles({ ...profileStore, profiles: remaining, activeId: next?.id ?? null });
       setAddresses(next?.kind === "watch" ? [next.address] : next?.kind === "wallet" && !requireUnlock && next.addresses.length ? next.addresses : null);
       if (!sharedAddress && biometricAddress === target.blob.address) {
@@ -2198,6 +2257,21 @@ export default function App() {
     pullDistanceRef.current = 0;
     setPullDistance(0);
   }
+
+  if (profileStorageError) return <div className="app"><main className="content"><section className="onboarding">
+    <Icon name="shield" size={40} /><h1>钱包数据需要恢复</h1>
+    <p role="alert">{profileStorageError}</p>
+    <p className="muted">请保留应用和本机数据。可先复制加密数据并离线保存，用于恢复钱包；不要发送助记词或密码。</p>
+    <button className="primary" onClick={() => {
+      try { void copy(profileRecoveryData(), "加密钱包数据已复制，请离线妥善保存"); }
+      catch { setError("无法读取恢复数据，请保留应用和本机数据"); }
+    }}>复制加密恢复数据</button>
+    <button className="secondary wide" onClick={() => {
+      try { const recovered = loadProfiles(); setProfileStore(recovered); setAddresses(null); setProfileStorageError(""); }
+      catch (failure) { setProfileStorageError(failure instanceof Error ? failure.message : "读取失败，请保留应用数据"); }
+    }}>重新读取</button>
+    {notice && <p role="status">{notice}</p>}{error && <p role="alert">{error}</p>}
+  </section></main></div>;
 
   return <div className={`app ${tab === "market" ? "trade-active" : ""} ${fullBookOpen || tradeHistoryOpen ? "full-book-active" : ""}`} onContextMenu={(event) => { if (!(event.target instanceof HTMLElement) || !event.target.closest("input, textarea, .secret-phrase")) event.preventDefault(); }}>
     <main className="content">

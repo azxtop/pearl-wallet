@@ -1,6 +1,6 @@
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
 import { isValidPearlAddress } from "./pearl";
-import { scriptForAddress } from "./send";
+import { scriptForAddress, verifiedBroadcastId } from "./send";
 import type { Activity, WalletSnapshot, WalletUtxo } from "./rpc";
 
 const BASE = "https://pearlchain.live/api/explorer";
@@ -188,10 +188,9 @@ export async function scanWalletExplorer(addresses: string[], probe?: ExplorerPr
   return { balanceGrains, pendingGrains, pendingOutputs, utxos, activities, partial, updatedAt: Date.now() };
 }
 
-export async function broadcastViaExplorer(rawHex: string): Promise<string> {
+export async function broadcastViaExplorer(rawHex: string, expectedTxid: string): Promise<string> {
   if (!/^[0-9a-f]+$/i.test(rawHex)) throw new Error("签名交易格式无效");
   const response = await request<{ txid?: string; error?: string }>("/broadcast", { hex: rawHex });
   if (response.error) throw new Error(response.error);
-  if (!response.txid || !/^[0-9a-fA-F]{64}$/.test(response.txid)) throw new Error("广播结果无效");
-  return response.txid;
+  return verifiedBroadcastId(response.txid, expectedTxid);
 }

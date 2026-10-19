@@ -17,7 +17,24 @@ const credential = spawnSync('git', ['credential', 'fill'], {
 const token = credential.stdout.split(/\r?\n/).find((line) => line.startsWith('password='))?.slice(9);
 if (credential.status !== 0 || !token) throw new Error('GitHub credential unavailable');
 const commit = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+const localTag = spawnSync('git', ['rev-list', '-n', '1', tag], { encoding: 'utf8' });
+if (localTag.status !== 0 || localTag.stdout.trim() !== commit) throw new Error('Release tag must point to the current commit');
 const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'PearlWalletRelease' };
+const notes = `Pearl Wallet ${version} 安全修复预发布版
+
+- 修复私钥清理不完整的问题，取消长期私钥缓存，操作结束后销毁派生密钥。
+- 切换后台或手动锁定时终止钱包 Worker、清空敏感输入，并取消过期授权回调。
+- 修复异常钱包列表可能被覆盖的问题，新增保留原数据的恢复入口。
+- 修改密码时同步更新同地址钱包，确认保存成功后清理对应旧版加密副本；保存失败保留原数据。
+- 关闭正式版和测试版的 Capacitor 桥接日志，避免插件敏感参数写入日志。
+- 在本机计算交易 ID，并核对节点和备用浏览器的广播返回值。
+
+验证：133 项测试通过，类型检查、Android 构建及正式版签名校验通过。
+
+此版本经过有范围的技术复核，尚不属于第三方独立安全审计，也未完成真实主网转账测试。
+APK 与旧正式版签名一致，可覆盖升级并保留钱包数据。debug 版签名不同，请勿通过卸载旧钱包来切换版本；先确保助记词已离线备份。
+
+SHA-256: ${hash}`;
 async function checked(response) {
   const body = await response.json();
   if (!response.ok) throw new Error(`GitHub HTTP ${response.status}: ${String(body.message || 'request failed').slice(0, 120)}`);
@@ -31,8 +48,8 @@ else if (existing.status === 404) {
   release = await checked(await fetch(url, {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true,
-      body: `Pearl Wallet ${version} 预发布版\n\n- 适配 SafeTrade PEARL/USDT 新市场，恢复实时行情、盘口、K 线和成交。\n- SafeTrade 资产显示更新为 PEARL。\n- 合并迁移前后的个人成交记录，并避免重复计入。\n\nSHA-256: ${hash}`,
+      tag_name: tag, target_commitish: commit, name: `Pearl Wallet ${tag}`, prerelease: true, draft: true,
+      body: notes,
     }),
   }));
 } else await checked(existing);
@@ -41,8 +58,24 @@ if (!release.assets.some((asset) => asset.name === filename)) {
   const asset = await checked(await fetch(uploadUrl, {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/vnd.android.package-archive', 'Content-Length': String(bytes.length) }, body: bytes,
   }));
-  if (asset.size !== bytes.length) throw new Error('Uploaded asset size mismatch');
+  if (asset.size !== bytes.length || asset.digest !== `sha256:${hash}`) throw new Error('Uploaded APK does not match local size and SHA-256');
+} else {
+  const asset = release.assets.find((item) => item.name === filename);
+  if (asset.size !== bytes.length || asset.digest && asset.digest !== `sha256:${hash}`) throw new Error('Existing release asset does not match the local APK');
 }
+const checksumName = `${filename}.sha256`;
+if (!release.assets.some((asset) => asset.name === checksumName)) {
+  const checksum = Buffer.from(`${hash}  ${filename}\n`, 'utf8');
+  await checked(await fetch(`${release.upload_url.split('{')[0]}?name=${encodeURIComponent(checksumName)}`, {
+    method: 'POST', headers: { ...headers, 'Content-Type': 'text/plain', 'Content-Length': String(checksum.length) }, body: checksum,
+  }));
+}
+// Publish only after all assets have been uploaded and checked. The caller
+// updates main's manifest after this succeeds, so updaters never see a 404.
+release = await checked(await fetch(release.url, {
+  method: 'PATCH', headers: { ...headers, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ name: `Pearl Wallet ${tag}`, body: notes, draft: false, prerelease: true }),
+}));
 console.log('Release:', release.html_url);
 console.log('Asset:', `${release.html_url.replace('/tag/', '/download/')}/${filename}`);
 console.log('SHA-256:', hash);

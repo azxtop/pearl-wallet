@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mnemonicToEntropy } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english";
 import { derivePearlWallet, isValidMnemonic, newMnemonic } from "./pearl";
 import { decryptMnemonic, encryptMnemonic } from "./keystore";
 
 const VECTOR = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+afterEach(() => vi.unstubAllGlobals());
 // Captured by Pearl Oyster for the BIP-39 vector seed, m/86'/808276'/0'/0/i.
 const OYSTER_ADDRESSES = [
   "prl1pr6yuq8u2r95wjzzgpdy8cpnncpl7l8zgy6x5q0367pnc53s2famqg7pt74",
@@ -13,6 +16,22 @@ const OYSTER_ADDRESSES = [
 ];
 
 describe("Pearl Oyster compatibility", () => {
+  it("stops creation if cryptographic randomness is unavailable or fails", () => {
+    vi.stubGlobal("crypto", {});
+    expect(() => newMnemonic()).toThrow("安全随机数不可用");
+    vi.stubGlobal("crypto", { getRandomValues: () => { throw new Error("RNG unavailable"); } });
+    expect(() => newMnemonic()).toThrow("RNG unavailable");
+  });
+
+  it("preserves all 128 entropy bits in BIP39 and wipes the temporary random buffer", () => {
+    const entropy = Uint8Array.from({ length: 16 }, (_, index) => index * 17);
+    let supplied: Uint8Array | undefined;
+    const random = vi.fn((buffer: Uint8Array) => { supplied = buffer; buffer.set(entropy); return buffer; });
+    vi.stubGlobal("crypto", { getRandomValues: random });
+    expect(mnemonicToEntropy(newMnemonic(), wordlist)).toEqual(entropy);
+    expect(random).toHaveBeenCalledOnce();
+    expect(supplied?.every((byte) => byte === 0)).toBe(true);
+  });
   it("derives the same first five mainnet addresses", async () => {
     const result = await derivePearlWallet(VECTOR);
     expect(result.addresses.slice(0, 5)).toEqual(OYSTER_ADDRESSES);
