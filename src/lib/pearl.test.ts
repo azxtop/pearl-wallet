@@ -16,6 +16,10 @@ const OYSTER_ADDRESSES = [
 ];
 
 describe("Pearl Oyster compatibility", () => {
+  it("rejects malformed Pearl addresses before binding wallet ciphertext to them", async () => {
+    await expect(encryptMnemonic(VECTOR, "a-strong-test-password", "prl1p-invalid"))
+      .rejects.toThrow("钱包地址无效");
+  });
   it("stops creation if cryptographic randomness is unavailable or fails", () => {
     vi.stubGlobal("crypto", {});
     expect(() => newMnemonic()).toThrow("安全随机数不可用");
