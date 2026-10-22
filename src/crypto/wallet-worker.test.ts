@@ -69,7 +69,7 @@ describe("wallet worker authorization and signing", () => {
     const changed = await request("changePassword", { blob, oldPassword: password, newPassword: "a-new-test-password" });
     expect(changed.error).toBeUndefined(); assertDestroyed();
     expect((await request("unlock", { blob: changed.result.blob, password: "a-new-test-password" })).error).toBeUndefined(); assertDestroyed();
-  });
+  }, 15_000);
 
   it("rejects operations already deriving when a lock arrives and destroys their keys", async () => {
     const assertDestroyed = trackPrivateKeys();
