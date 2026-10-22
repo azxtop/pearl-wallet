@@ -31,7 +31,7 @@ test('public market never includes account data; connection token gates balances
       if (request.headers['x-auth-apikey'] !== key || request.headers['x-auth-signature'] !== signature) {
         response.statusCode = 403;
         response.end('{}');
-      } else if (new URL(`http://test${path}`).searchParams.get('market') === 'prlusdt') response.end(JSON.stringify([{ id: 41, market: 'prlusdt', side: 'sell', order_side: 'sell', price: '1.1', amount: '2', created_at: new Date(Date.now() - 2 * 86_400_000).toISOString() }]));
+      } else if (new URL(`http://test${path}`).searchParams.get('market') === 'prlusdt') response.end(JSON.stringify([{ id: 41, market: 'prlusdt', side: 'sell', order_side: 'sell', price: '1.1', amount: '2', created_at: '2026-10-17T12:00:00Z' }]));
       else response.end(JSON.stringify([{ id: 41, market: 'pearlusdt', side: 'sell', order_side: 'buy', price: '1.25', amount: '4', created_at: new Date(Date.now() - 60_000).toISOString() }]));
     }
     else if (path.includes('/trades')) response.end(JSON.stringify([{ id: 1, price: '1.5', amount: '2', side: 'buy', created_at: '2026-09-27T02:56:30Z' }]));

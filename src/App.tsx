@@ -10,7 +10,7 @@ import { loadPendingOutgoing, pendingFromBroadcast, projectWalletSnapshot, recon
 import { broadcastViaExplorer } from "./lib/explorer";
 import { WalletSynchronizer } from "./lib/wallet-sync";
 import { loadSnapshotCache, saveSnapshotCache, type SnapshotCache } from "./lib/snapshot-cache";
-import { formatPrl, isValidPearlAddress, parsePrl } from "./lib/pearl";
+import { formatPrl, formatPrlInput, isValidPearlAddress, parsePrl } from "./lib/pearl";
 import { broadcastPearlTx } from "./lib/rpc";
 import { maxSpendable, prepareSend, SEND_FEE_RATES, type SendFeeTier, type SendPreview } from "./lib/send";
 import { estimatedSpotAssetsUSDT, totalAssetBalance } from "./lib/asset-balance";
@@ -57,7 +57,7 @@ function loadPersonalChartRange(): PersonalTradeRange {
 }
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.41";
+const APP_VERSION = "0.2.42";
 const PROJECT_URL = "https://pearlwallet.az1993.xyz/";
 const SOURCE_URL = "https://github.com/azxtop/pearl-wallet";
 const CONTACT_EMAIL = "az1993515909@gmail.com";
@@ -2160,7 +2160,8 @@ export default function App() {
 
   function chooseSendPercent(percent: number) {
     if (sendMax <= 0n) return;
-    setSendAmount(formatPrl(sendMax * BigInt(percent) / 100n));
+    setSendAmount(formatPrlInput(sendMax * BigInt(percent) / 100n));
+    setError("");
   }
 
   function openAddressBook(purpose: "send" | "manage") {
@@ -2320,7 +2321,7 @@ export default function App() {
         {walletPage === "receive" && <div className="receive-card"><p className="muted">Pearl 主网地址</p>{receiveQr && <img src={receiveQr} alt="收款地址二维码" className="qr" />}<p className="address-text">{addresses[0]}</p><button className="secondary" onClick={() => copy(addresses[0]!)}><Icon name="copy" size={18} /> 复制地址</button></div>}
         {walletPage === "send" && !preview && <form className="send-form" onSubmit={makePreview}>
           <div className="send-wallet-card"><div><span>付款钱包</span><strong>{activeProfile?.name ?? "—"}</strong></div><div><span>钱包余额</span><strong>{projected ? `${formatPrl(projected.balanceGrains)} PRL` : "—"}</strong></div></div>
-          <label className="send-field"><span>转账金额</span><div className="send-amount-input"><input value={sendAmount} onChange={(event) => setSendAmount(event.target.value)} inputMode="decimal" placeholder="0.00" autoComplete="off" aria-label="转账金额" /><strong>PRL</strong></div></label>
+          <label className="send-field"><span>转账金额</span><div className="send-amount-input"><input value={sendAmount} onChange={(event) => { setSendAmount(event.target.value.replaceAll(",", "")); setError(""); }} inputMode="decimal" placeholder="0.00" autoComplete="off" aria-label="转账金额" /><strong>PRL</strong></div></label>
           <p className="send-spendable">最多可发送 {snapshotFresh && !snapshot?.partial ? formatPrl(sendMax) : "—"} PRL</p>
           <div className="send-percent-buttons">{[25, 50, 75, 100].map((percent) => <button key={percent} type="button" disabled={sendMax <= 0n} onClick={() => chooseSendPercent(percent)}>{percent === 100 ? "MAX" : `${percent}%`}</button>)}</div>
           <div className="send-field"><div className="send-address-heading"><span>收款地址</span><button type="button" onClick={() => openAddressBook("send")}>地址簿 ›</button></div><input value={sendAddress} onChange={(event) => setSendAddress(event.target.value)} placeholder="输入 prl1… 收款地址" autoComplete="off" spellCheck={false} aria-label="收款地址" /></div>

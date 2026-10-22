@@ -20,16 +20,13 @@ const commit = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).std
 const localTag = spawnSync('git', ['rev-list', '-n', '1', tag], { encoding: 'utf8' });
 if (localTag.status !== 0 || localTag.stdout.trim() !== commit) throw new Error('Release tag must point to the current commit');
 const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'PearlWalletRelease' };
-const notes = `Pearl Wallet ${version} 安全修复预发布版
+const notes = `Pearl Wallet ${version} 预发布版
 
-- 修复私钥清理不完整的问题，取消长期私钥缓存，操作结束后销毁派生密钥。
-- 切换后台或手动锁定时终止钱包 Worker、清空敏感输入，并取消过期授权回调。
-- 修复异常钱包列表可能被覆盖的问题，新增保留原数据的恢复入口。
-- 修改密码时同步更新同地址钱包，确认保存成功后清理对应旧版加密副本；保存失败保留原数据。
-- 关闭正式版和测试版的 Capacitor 桥接日志，避免插件敏感参数写入日志。
-- 在本机计算交易 ID，并核对节点和备用浏览器的广播返回值。
+- 修复转账 MAX 和百分比按钮在金额超过 1,000 PRL 时填入千位逗号，导致误报「金额最多保留 8 位小数」的问题。
+- 手动输入或粘贴金额时移除千位逗号；修改金额时清除旧错误提示。
+- 校正 SafeTrade 旧市场成交测试样本的时间，使其仍落在切换日期之前。
 
-验证：133 项测试通过，类型检查、Android 构建及正式版签名校验通过。
+验证：134 项测试通过，类型检查、Android 构建及正式版签名校验通过。
 
 此版本经过有范围的技术复核，尚不属于第三方独立安全审计，也未完成真实主网转账测试。
 APK 与旧正式版签名一致，可覆盖升级并保留钱包数据。debug 版签名不同，请勿通过卸载旧钱包来切换版本；先确保助记词已离线备份。

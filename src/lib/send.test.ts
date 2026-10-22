@@ -1,6 +1,7 @@
 import { bech32m } from '@scure/base';
 import { describe, expect, it } from 'vitest';
 import { maxSpendable, prepareSend, SEND_FEE_RATES } from './send';
+import { formatPrlInput, parsePrl } from './pearl';
 import type { WalletUtxo } from './rpc';
 
 const address = bech32m.encode('prl', [1, ...bech32m.toWords(new Uint8Array(32).fill(1))], 90);
@@ -29,5 +30,14 @@ describe('send fee choices and maximum amount', () => {
     const preview = prepareSend([...utxos, tiny], destination, maximum, address, SEND_FEE_RATES.priority);
     expect(preview.inputs).toHaveLength(2);
     expect(() => prepareSend(utxos, destination, maximum + 1n, address, SEND_FEE_RATES.priority)).toThrow();
+  });
+
+  it('keeps MAX amounts above 1,000 PRL valid when inserted into the amount field', () => {
+    const largeUtxos = [{ ...utxos[0], valueGrains: 123_456_789_123n }];
+    const maximum = maxSpendable(largeUtxos);
+    const amountText = formatPrlInput(maximum);
+    expect(amountText).toBe('1234.56788899');
+    expect(parsePrl(amountText)).toBe(maximum);
+    expect(prepareSend(largeUtxos, destination, parsePrl(amountText), address).changeGrains).toBe('0');
   });
 });

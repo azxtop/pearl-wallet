@@ -125,3 +125,11 @@ export function formatPrl(grains: bigint, maxFraction = 8): string {
   const fraction = (abs % GRAINS_PER_PRL).toString().padStart(8, "0").slice(0, maxFraction).replace(/0+$/, "");
   return `${sign}${whole.toLocaleString("en-US")}${fraction ? `.${fraction}` : ""}`;
 }
+
+export function formatPrlInput(grains: bigint): string {
+  const sign = grains < 0n ? "-" : "";
+  const abs = grains < 0n ? -grains : grains;
+  const whole = abs / GRAINS_PER_PRL;
+  const fraction = (abs % GRAINS_PER_PRL).toString().padStart(8, "0").replace(/0+$/, "");
+  return `${sign}${whole}${fraction ? `.${fraction}` : ""}`;
+}
