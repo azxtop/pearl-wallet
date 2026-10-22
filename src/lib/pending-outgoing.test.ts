@@ -82,6 +82,36 @@ describe("locally broadcast transactions", () => {
     expect(loadPendingOutgoing(storage)).toEqual([pending]);
   });
 
+  it("keeps signed raw transactions for replay and ages from the most recent broadcast", () => {
+    const values = new Map<string, string>();
+    const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+    const recent = { ...pendingFromBroadcast("wallet-1", [own], sentTxid, preview, now, "00aaff"), lastBroadcastAt: now + 48 * 60 * 60 * 1000 };
+    savePendingOutgoing([recent], storage);
+    const restored = loadPendingOutgoing(storage);
+    expect(restored).toEqual([recent]);
+    expect(projectWalletSnapshot(base, restored, now + 49 * 60 * 60 * 1000).staleTxids.size).toBe(0);
+  });
+
+  it("removes a replacement if the original transaction confirms first", () => {
+    const replacement = { ...pending, txid: "c".repeat(64), replacesTxid: sentTxid };
+    const oldConfirmed = { ...base, utxos: [], activities: [{ txid: sentTxid, deltaGrains: -110n, time: 5, confirmations: 2 }] };
+    expect(reconcilePendingOutgoing([replacement], "wallet-1", own, oldConfirmed)).toEqual([]);
+    const view = projectWalletSnapshot(oldConfirmed, [replacement], now);
+    expect(view.activities).toEqual(oldConfirmed.activities);
+    expect(view.availableUtxos).toEqual([]);
+  });
+
+  it("does not count two mutually exclusive change outputs while the original is pending", () => {
+    const replacement = { ...pending, txid: "c".repeat(64), replacesTxid: sentTxid };
+    const originalPending = { ...base, balanceGrains: 890n, pendingGrains: 890n, utxos: [],
+      pendingOutputs: [{ txid: sentTxid, vout: 1, valueGrains: 890n }],
+      activities: [{ txid: sentTxid, deltaGrains: -110n, time: 4, confirmations: 0 }] };
+    const view = projectWalletSnapshot(originalPending, [replacement], now);
+    expect(view.balanceGrains).toBe(890n);
+    expect(view.pendingGrains).toBe(890n);
+    expect(view.estimated).toBe(false);
+  });
+
   it("stops estimating an unresolved transfer after 48 hours", () => {
     const view = projectWalletSnapshot(base, [pending], now + 49 * 60 * 60 * 1000);
     expect(view.balanceGrains).toBe(1000n);

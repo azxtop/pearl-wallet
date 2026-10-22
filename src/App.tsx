@@ -6,12 +6,13 @@ import { wallet } from "./crypto/client";
 import { biometric } from "./lib/biometric";
 import { installUpdate } from "./lib/update";
 import { isNewerVersion, parseUpdateManifest, UPDATE_MANIFEST_URLS } from "./lib/update-manifest";
-import { loadPendingOutgoing, pendingFromBroadcast, projectWalletSnapshot, reconcilePendingOutgoing, savePendingOutgoing } from "./lib/pending-outgoing";
+import { loadPendingOutgoing, pendingFromBroadcast, projectWalletSnapshot, reconcilePendingOutgoing, savePendingOutgoing, type PendingOutgoing } from "./lib/pending-outgoing";
+import { auditPendingOutgoing, type PendingAudit } from "./lib/pending-recovery";
 import { broadcastViaExplorer } from "./lib/explorer";
 import { WalletSynchronizer } from "./lib/wallet-sync";
 import { loadSnapshotCache, saveSnapshotCache, type SnapshotCache } from "./lib/snapshot-cache";
 import { formatPrl, formatPrlInput, isValidPearlAddress, parsePrl } from "./lib/pearl";
-import { broadcastPearlTx } from "./lib/rpc";
+import { broadcastPearlTx, type WalletSnapshot } from "./lib/rpc";
 import { maxSpendable, prepareSend, SEND_FEE_RATES, type SendFeeTier, type SendPreview } from "./lib/send";
 import { estimatedSpotAssetsUSDT, totalAssetBalance } from "./lib/asset-balance";
 import type { EncryptedWallet } from "./lib/keystore";
@@ -57,7 +58,7 @@ function loadPersonalChartRange(): PersonalTradeRange {
 }
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.42";
+const APP_VERSION = "0.2.43";
 const PROJECT_URL = "https://pearlwallet.az1993.xyz/";
 const SOURCE_URL = "https://github.com/azxtop/pearl-wallet";
 const CONTACT_EMAIL = "az1993515909@gmail.com";
@@ -573,6 +574,8 @@ export default function App() {
   const [walletPage, setWalletPage] = useState<WalletPage>("home");
   const [snapshotCache, setSnapshotCache] = useState<SnapshotCache>(loadSnapshotCache);
   const [pendingOutgoing, setPendingOutgoing] = useState(loadPendingOutgoing);
+  const [pendingAudit, setPendingAudit] = useState<{ txid: string; result: PendingAudit } | null>(null);
+  const [recovery, setRecovery] = useState<{ txid: string; coins: WalletSnapshot["utxos"] } | null>(null);
   const [freshSnapshotKey, setFreshSnapshotKey] = useState<string | null>(null);
   const snapshotKey = activeProfile && addresses ? `${activeProfile.id}:${addresses.join("|")}` : null;
   const cached = activeProfile && addresses ? snapshotCache[activeProfile.id] : null;
@@ -1908,7 +1911,8 @@ export default function App() {
       if (!snapshotFresh || snapshotError) throw new Error("请先重新同步链上余额");
       if (snapshot.partial) throw new Error("链上交易记录不完整，暂不能安全转账");
       if (!isValidPearlAddress(sendAddress.trim())) throw new Error("Pearl 收款地址无效");
-      setPreview(prepareSend(projected?.availableUtxos ?? snapshot.utxos, sendAddress.trim(), parsePrl(sendAmount.trim()), addresses[0]!, SEND_FEE_RATES[sendFeeTier]));
+      if (recovery && !localPending.some((record) => record.txid.toLowerCase() === recovery.txid)) throw new Error("待处理交易已变化，请重新核对");
+      setPreview(prepareSend(recovery?.coins ?? projected?.availableUtxos ?? snapshot.utxos, sendAddress.trim(), parsePrl(sendAmount.trim()), addresses[0]!, SEND_FEE_RATES[sendFeeTier]));
       setPreviewScanSequence(walletScanSequence.current);
     } catch (failure) { setError(failure instanceof Error ? failure.message : "无法创建交易预览"); }
   }
@@ -1918,6 +1922,15 @@ export default function App() {
     const generation = walletAccessGeneration.current;
     await run(async () => {
       if (!snapshotFresh || snapshotError || snapshot?.partial || previewScanSequence !== walletScanSequence.current) throw new Error("链上余额已变化，请重新预览转账");
+      if (recovery) {
+        const original = localPending.find((record) => record.txid.toLowerCase() === recovery.txid);
+        if (!original || !snapshot || !addresses) throw new Error("原交易已变化，请重新核对");
+        const audit = await auditPendingOutgoing(original, addresses, snapshot);
+        const permitted = new Set(audit.coins?.map((coin) => `${coin.txid.toLowerCase()}:${coin.vout}`));
+        if (audit.state !== "recoverable" || !preview.inputs.length || preview.inputs.some((coin) => !permitted.has(`${coin.txid.toLowerCase()}:${coin.vout}`))) {
+          throw new Error("原交易或输入状态已变化，已停止重新转账");
+        }
+      }
       if (useFinger && !fingerprintEnabled) throw new Error("当前钱包尚未启用指纹");
       const auth = useFinger ? { biometricMnemonic: (await biometric.authenticate(blob.address, biometricAddress)).mnemonic } : { password: authPassword };
       if (!accessCurrent(generation)) return;
@@ -1931,25 +1944,81 @@ export default function App() {
         if (!accessCurrent(generation)) return;
         txid = await broadcastViaExplorer(signed.rawHex, signed.txid);
       }
+      let pendingSaveFailed = false;
       if (activeProfile) {
         try {
-          const record = pendingFromBroadcast(activeProfile.id, addresses, txid, preview);
-          const next = [...pendingOutgoingRef.current.filter((item) => item.txid.toLowerCase() !== txid.toLowerCase()), record];
+          const record = pendingFromBroadcast(activeProfile.id, addresses, txid, preview, Date.now(), signed.rawHex.length <= 20_000 ? signed.rawHex : undefined);
+          if (recovery) record.replacesTxid = recovery.txid;
+          const next = [...pendingOutgoingRef.current.filter((item) => item.txid.toLowerCase() !== txid.toLowerCase() && item.txid.toLowerCase() !== recovery?.txid), record];
           pendingOutgoingRef.current = next;
           setPendingOutgoing(next);
-          savePendingOutgoing(next);
-        } catch (failure) { console.warn("Pending transaction record failed", failure); }
+          try { savePendingOutgoing(next); }
+          catch {
+            delete record.rawHex;
+            savePendingOutgoing(next);
+          }
+        } catch (failure) { pendingSaveFailed = true; console.warn("Pending transaction record failed", failure); }
       }
-      setPreview(null); setAuthPassword(""); setSendAddress(""); setSendAmount(""); setWalletPage("home");
-      setNotice(`转账已广播：${txid.slice(0, 14)}…`);
+      setPreview(null); setAuthPassword(""); setSendAddress(""); setSendAmount(""); setRecovery(null); setPendingAudit(null); setWalletPage("home");
+      setNotice(pendingSaveFailed ? `转账已广播，但本机记录保存失败。请记下交易 ID：${txid}` : `转账已广播：${txid.slice(0, 14)}…`);
       if (activeProfile) await refreshWallet(activeProfile.id, addresses);
     });
+  }
+
+  async function checkPending(record: PendingOutgoing) {
+    if (!addresses || !snapshot || !snapshotFresh || snapshotError) { setError("请先刷新链上数据再核对交易"); return; }
+    setPendingAudit(null);
+    await run(async () => {
+      const result = await auditPendingOutgoing(record, addresses, snapshot);
+      setPendingAudit({ txid: record.txid.toLowerCase(), result });
+      if (result.state === "confirmed" && activeProfile) await refreshWallet(activeProfile.id, addresses);
+    });
+  }
+
+  async function rebroadcastPending(record: PendingOutgoing) {
+    if (!record.rawHex || !addresses) { setError("本机未保存这笔签名交易，无法重播"); return; }
+    await run(async () => {
+      if (snapshot && snapshotFresh && !snapshotError) {
+        try {
+          const checked = await auditPendingOutgoing(record, addresses, snapshot);
+          setPendingAudit({ txid: record.txid.toLowerCase(), result: checked });
+          if (checked.state === "confirmed") { setNotice("这笔交易已经确认"); return; }
+          if (checked.state === "pending") { setNotice("这笔交易仍在网络待确认"); return; }
+        } catch (failure) { console.warn("Original transaction check unavailable before replay", failure); }
+      }
+      try { await broadcastPearlTx(record.rawHex!, record.txid); }
+      catch (primaryError) {
+        try { await broadcastViaExplorer(record.rawHex!, record.txid); }
+        catch {
+          try {
+            if (!snapshot) throw primaryError;
+            const after = await auditPendingOutgoing(record, addresses, snapshot);
+            if (after.state !== "pending" && after.state !== "confirmed") throw primaryError;
+          } catch { throw primaryError; }
+        }
+      }
+      const next = pendingOutgoingRef.current.map((item) => item.profileId === record.profileId && item.pool === record.pool && item.txid.toLowerCase() === record.txid.toLowerCase()
+        ? { ...item, lastBroadcastAt: Date.now() } : item);
+      savePendingOutgoing(next);
+      pendingOutgoingRef.current = next;
+      setPendingOutgoing(next);
+      setPendingAudit(null);
+      setNotice("原交易已重新广播，请等待链上确认");
+      if (activeProfile) await refreshWallet(activeProfile.id, addresses);
+    });
+  }
+
+  function startRecovery(record: PendingOutgoing) {
+    if (watchMode || pendingAudit?.txid !== record.txid.toLowerCase() || pendingAudit.result.state !== "recoverable" || !pendingAudit.result.coins?.length) return;
+    setRecovery({ txid: record.txid.toLowerCase(), coins: pendingAudit.result.coins });
+    setPreview(null); setSendAmount(""); setSendAddress(""); setAuthPassword("");
+    setWalletPage("send"); setError("");
   }
 
   function lockWallet() {
     walletAccessGeneration.current++;
     void wallet.lock(); clearWalletSecrets();
-    setAddresses(null); setFreshSnapshotKey(null); setWalletPage("home"); setAutoFingerAttempted(true);
+    setAddresses(null); setFreshSnapshotKey(null); setWalletPage("home"); setRecovery(null); setPendingAudit(null); setAutoFingerAttempted(true);
     setTab("wallet"); setNotice("钱包已锁定");
   }
 
@@ -2019,7 +2088,7 @@ export default function App() {
     clearWalletSecrets();
     persistProfiles({ ...profileStore, activeId: profile.id });
     setAddresses(profile.kind === "watch" ? [profile.address] : !requireUnlock && profile.addresses.length ? profile.addresses : null);
-    setFreshSnapshotKey(null); setSnapshotError(""); setWalletPage("home"); setTab("wallet");
+    setFreshSnapshotKey(null); setSnapshotError(""); setWalletPage("home"); setRecovery(null); setPendingAudit(null); setTab("wallet");
     setProfileMenuOpen(false); setRenamingProfile(false); setConfirmRemoveWatch(false); setAddingProfile(false); setPreview(null); setAuthPassword("");
     setShowMnemonic(""); setBackupMnemonic(""); setPassword(""); setOldPassword(""); setFingerPassword(""); setBackupPassword("");
     setAutoFingerAttempted(false);
@@ -2031,7 +2100,7 @@ export default function App() {
     clearWalletSecrets();
     setAddresses(activeProfile?.kind === "watch" ? [activeProfile.address] : null);
     setSetupMode(mode); setAddingProfile(true); setProfileMenuOpen(false); setRenamingProfile(false); setConfirmRemoveWatch(false); setTab("wallet");
-    setWalletPage("home"); setPreview(null); setPassword(""); setInputMnemonic(""); setBackupMnemonic("");
+    setWalletPage("home"); setRecovery(null); setPendingAudit(null); setPreview(null); setPassword(""); setInputMnemonic(""); setBackupMnemonic("");
     setWalletName(""); setAutoFingerAttempted(true);
   }
 
@@ -2061,7 +2130,7 @@ export default function App() {
     const next = remaining[0] ?? null;
     persistProfiles({ ...profileStore, profiles: remaining, activeId: next?.id ?? null });
     setAddresses(next?.kind === "watch" ? [next.address] : next?.kind === "wallet" && !requireUnlock && next.addresses.length ? next.addresses : null);
-    setFreshSnapshotKey(null); setSnapshotError(""); setWalletPage("home"); setPreview(null); setBackupMnemonic("");
+    setFreshSnapshotKey(null); setSnapshotError(""); setWalletPage("home"); setRecovery(null); setPendingAudit(null); setPreview(null); setBackupMnemonic("");
     setProfileMenuOpen(false); setConfirmRemoveWatch(false); setRenamingProfile(false); setAutoFingerAttempted(false);
     setNotice("观察地址已移除");
   }
@@ -2112,7 +2181,7 @@ export default function App() {
       pendingOutgoingRef.current = nextPending;
       setPendingOutgoing(nextPending);
       try { savePendingOutgoing(nextPending); } catch (failure) { console.warn("Pending transaction cleanup failed", failure); }
-      setFreshSnapshotKey(null); setSnapshotError(""); setWalletPage("home"); setTab("wallet"); setPreview(null);
+      setFreshSnapshotKey(null); setSnapshotError(""); setWalletPage("home"); setRecovery(null); setPendingAudit(null); setTab("wallet"); setPreview(null);
       setShowMnemonic(""); setBackupMnemonic(""); setBackupPassword(""); setPassword(""); setOldPassword(""); setFingerPassword(""); setAuthPassword("");
       setWalletRemovalOpen(false); setWalletRemovalName(""); setWalletRemovalPassword("");
       setAutoFingerAttempted(false); setNotice("钱包已从本机删除");
@@ -2155,7 +2224,7 @@ export default function App() {
   const balanceLabel = projected ? formatPrl(projected.balanceGrains) : "—";
   const visibleActivities = projected?.activities ?? snapshot?.activities ?? [];
   const sendMax = snapshotFresh && projected && !snapshot?.partial && !snapshotError
-    ? maxSpendable(projected.availableUtxos, SEND_FEE_RATES[sendFeeTier]) : 0n;
+    ? maxSpendable(recovery?.coins ?? projected.availableUtxos, SEND_FEE_RATES[sendFeeTier]) : 0n;
   const spotEstimatedUSDT = estimatedSpotAssetsUSDT(account?.balances, exchange?.price);
 
   function chooseSendPercent(percent: number) {
@@ -2308,28 +2377,42 @@ export default function App() {
         {pullDistance > 0 && <div className="pull-indicator" style={{ height: pullDistance }}>{pullDistance >= 48 ? "松开刷新" : "下拉刷新"}</div>}
         {walletRefreshing && <div className="pull-status">正在同步链上数据…{snapshot && !snapshotFresh ? " 当前显示上次记录" : ""}</div>}
         <div className="balance-block"><p>{projected?.estimated ? "预计总余额" : "Total Balance"}</p><h1>{balanceLabel} <span>PRL</span></h1>{!!projected?.pendingGrains && <small>待确认 {formatPrl(projected.pendingGrains)} PRL · 暂不可转</small>}{projected?.estimated && <small>含本机待确认转账估算，以链上确认为准</small>}{snapshot?.partial && <small>链上记录未完全同步</small>}</div>
-        <div className="actions">{!watchMode && <ActionCard icon="send" label="Send" onClick={() => setWalletPage("send")} />}<ActionCard icon="receive" label="Receive" onClick={() => setWalletPage("receive")} /></div>
+        <div className="actions">{!watchMode && <ActionCard icon="send" label="Send" onClick={() => { setRecovery(null); setWalletPage("send"); }} />}<ActionCard icon="receive" label="Receive" onClick={() => setWalletPage("receive")} /></div>
         <div className="section-heading"><h2>Activity</h2><div className="section-actions"><button aria-label="刷新链上数据" onClick={() => activeProfile && refreshWallet(activeProfile.id, addresses)}><Icon name="refresh" size={19} /></button><button onClick={() => setWalletPage("history")}>View All</button></div></div>
         {snapshotError && <div className="inline-error">{snapshotError}{snapshot && <span> · 显示上次同步结果，转账前请重试</span>}<button onClick={() => activeProfile && refreshWallet(activeProfile.id, addresses)}>重试</button></div>}
+        {!!projected?.staleTxids.size && <div className="pending-recovery-note"><strong>有待核对的转账</strong><span>原输入仍被保护，不能用于普通转账。请到“全部记录”核对或重播。</span></div>}
         {!snapshot && !snapshotError && <p className="muted">正在同步链上记录…</p>}
         {snapshot && visibleActivities.length === 0 && <div className="empty-card">暂无链上交易</div>}
         {visibleActivities.slice(0, 4).map((item) => <div className="activity" key={item.txid}><span className="activity-icon"><Icon name={item.deltaGrains >= 0n ? "receive" : "send"} size={18} /></span><div><strong>{item.deltaGrains >= 0n ? "Received" : "Sent"}</strong><small>{projected?.staleTxids.has(item.txid.toLowerCase()) ? "待核对" : item.confirmations === 0 ? "待确认" : item.time ? new Date(item.time * 1000).toLocaleString("zh-CN") : "时间未知"}</small></div><em className={item.deltaGrains >= 0n ? "positive" : "negative"}>{item.deltaGrains >= 0n ? "+" : ""}{formatPrl(item.deltaGrains)} PRL</em></div>)}
       </section>}
 
       {tab === "wallet" && addresses && !backupMnemonic && !addingProfile && walletPage !== "home" && <section className="subpage">
-        <div className="subpage-head"><button className="back" onClick={() => { setWalletPage("home"); setPreview(null); setAuthPassword(""); }}><Icon name="back" /></button><h1>{walletPage === "send" ? "发送 PRL" : walletPage === "receive" ? "接收 PRL" : "全部记录"}</h1></div>
+        <div className="subpage-head"><button className="back" onClick={() => { setWalletPage("home"); setPreview(null); setAuthPassword(""); setRecovery(null); }}><Icon name="back" /></button><h1>{walletPage === "send" ? "发送 PRL" : walletPage === "receive" ? "接收 PRL" : "全部记录"}</h1></div>
         {walletPage === "receive" && <div className="receive-card"><p className="muted">Pearl 主网地址</p>{receiveQr && <img src={receiveQr} alt="收款地址二维码" className="qr" />}<p className="address-text">{addresses[0]}</p><button className="secondary" onClick={() => copy(addresses[0]!)}><Icon name="copy" size={18} /> 复制地址</button></div>}
         {walletPage === "send" && !preview && <form className="send-form" onSubmit={makePreview}>
+          {recovery && <div className="pending-recovery-note"><strong>重新构造转账</strong><span>仅使用原交易的输入。请重新填写收款地址与金额；签名前会再次核对两处链上数据。</span></div>}
           <div className="send-wallet-card"><div><span>付款钱包</span><strong>{activeProfile?.name ?? "—"}</strong></div><div><span>钱包余额</span><strong>{projected ? `${formatPrl(projected.balanceGrains)} PRL` : "—"}</strong></div></div>
           <label className="send-field"><span>转账金额</span><div className="send-amount-input"><input value={sendAmount} onChange={(event) => { setSendAmount(event.target.value.replaceAll(",", "")); setError(""); }} inputMode="decimal" placeholder="0.00" autoComplete="off" aria-label="转账金额" /><strong>PRL</strong></div></label>
           <p className="send-spendable">最多可发送 {snapshotFresh && !snapshot?.partial ? formatPrl(sendMax) : "—"} PRL</p>
+          {!recovery && !!projected?.staleTxids.size && <p className="send-spendable">待核对交易的输入仍被锁定；可在“全部记录”处理。</p>}
           <div className="send-percent-buttons">{[25, 50, 75, 100].map((percent) => <button key={percent} type="button" disabled={sendMax <= 0n} onClick={() => chooseSendPercent(percent)}>{percent === 100 ? "MAX" : `${percent}%`}</button>)}</div>
           <div className="send-field"><div className="send-address-heading"><span>收款地址</span><button type="button" onClick={() => openAddressBook("send")}>地址簿 ›</button></div><input value={sendAddress} onChange={(event) => setSendAddress(event.target.value)} placeholder="输入 prl1… 收款地址" autoComplete="off" spellCheck={false} aria-label="收款地址" /></div>
           <div className="send-fee-section"><span className="send-fee-title">交易手续费</span><div className="send-fee-card"><div className="send-fee-options">{(["priority", "standard", "economy"] as const).map((tier) => <button key={tier} type="button" className={sendFeeTier === tier ? "selected" : ""} aria-pressed={sendFeeTier === tier} onClick={() => setSendFeeTier(tier)}><span>{tier === "priority" ? "⚡" : tier === "standard" ? "◷" : "○"}</span><strong>{tier === "priority" ? "优先" : tier === "standard" ? "标准" : "经济"}</strong><small>{SEND_FEE_RATES[tier].toString()} grains/vB</small></button>)}</div><div className="send-fee-rate"><span>当前费率</span><strong>{formatPrl(SEND_FEE_RATES[sendFeeTier] * 1000n)} PRL/kB</strong></div></div></div>
           <button className="primary send-preview-button" disabled={!snapshotFresh || !snapshot || !!snapshotError || !!snapshot.partial || busy || !sendAmount.trim() || !sendAddress.trim()}>预览转账</button>
         </form>}
+        {walletPage === "send" && preview && recovery && <div className="pending-recovery-note"><strong>替代旧交易</strong><span>这笔转账只使用原交易的输入；两笔交易只能有一笔确认。</span></div>}
         {walletPage === "send" && preview && <div className="form-card"><p className="eyebrow">CONFIRM TRANSACTION</p><h2>请核对转账信息</h2><div className="preview-row"><span>收款地址</span><strong className="break">{preview.destination}</strong></div><div className="preview-row"><span>转账金额</span><strong>{formatPrl(BigInt(preview.amountGrains))} PRL</strong></div><div className="preview-row"><span>预计矿工费</span><strong>{formatPrl(BigInt(preview.feeGrains))} PRL</strong></div><div className="preview-row"><span>找零</span><strong>{formatPrl(BigInt(preview.changeGrains))} PRL</strong></div><Field label="钱包密码" value={authPassword} onChange={setAuthPassword} type="password" autoComplete="current-password" /><button className="primary" disabled={busy || !authPassword} onClick={() => confirmSend(false)}>{busy ? "正在发送…" : "确认并发送"}</button>{fingerprintEnabled && <button className="secondary wide" disabled={busy} onClick={() => confirmSend(true)}><Icon name="finger" size={18} /> 使用指纹确认</button>}<button className="text-button" onClick={() => { setPreview(null); setAuthPassword(""); }}>返回修改</button></div>}
-        {walletPage === "history" && <div className="history-list">{!visibleActivities.length && <div className="empty-card">暂无链上交易</div>}{visibleActivities.map((item) => <div className="activity" key={item.txid}><span className="activity-icon"><Icon name={item.deltaGrains >= 0n ? "receive" : "send"} size={18} /></span><div><strong>{item.deltaGrains >= 0n ? "Received" : "Sent"}</strong><small>{projected?.staleTxids.has(item.txid.toLowerCase()) ? "待核对" : item.confirmations === 0 ? "待确认" : item.time ? new Date(item.time * 1000).toLocaleString("zh-CN") : "时间未知"}<br />{item.txid.slice(0, 16)}…</small></div><em className={item.deltaGrains >= 0n ? "positive" : "negative"}>{item.deltaGrains >= 0n ? "+" : ""}{formatPrl(item.deltaGrains)} PRL</em></div>)}</div>}
+        {walletPage === "history" && <div className="history-list">{!visibleActivities.length && <div className="empty-card">暂无链上交易</div>}{visibleActivities.map((item) => {
+          const record = localPending.find((entry) => entry.txid.toLowerCase() === item.txid.toLowerCase());
+          const audit = pendingAudit?.txid === item.txid.toLowerCase() ? pendingAudit.result : null;
+          return <div className="history-entry" key={item.txid}><div className={record ? "activity activity-with-recovery" : "activity"}><span className="activity-icon"><Icon name={item.deltaGrains >= 0n ? "receive" : "send"} size={18} /></span><div><strong>{item.deltaGrains >= 0n ? "Received" : "Sent"}</strong><small>{projected?.staleTxids.has(item.txid.toLowerCase()) ? "待核对" : item.confirmations === 0 ? "待确认" : item.time ? new Date(item.time * 1000).toLocaleString("zh-CN") : "时间未知"}<br />{item.txid.slice(0, 16)}…</small></div><em className={item.deltaGrains >= 0n ? "positive" : "negative"}>{item.deltaGrains >= 0n ? "+" : ""}{formatPrl(item.deltaGrains)} PRL</em></div>
+            {record && <div className="pending-recovery-card"><div className="pending-recovery-actions"><button type="button" disabled={busy || walletRefreshing} onClick={() => void checkPending(record)}>核对交易</button>{record.rawHex && <button type="button" disabled={busy || walletRefreshing} onClick={() => void rebroadcastPending(record)}>重播原交易</button>}{audit?.state === "recoverable" && !watchMode && <button type="button" disabled={busy} onClick={() => startRecovery(record)}>用原输入重新转账</button>}</div>
+              {audit && <p>{audit.state === "confirmed" ? "已有浏览器显示交易已确认，正在同步钱包。" : audit.state === "pending" ? "浏览器仍能查到待确认交易，输入继续锁定。" : audit.state === "recoverable" ? "两处浏览器暂时查不到原交易，且原输入都显示可用。重新转账会与原交易互斥；请核对收款地址和金额。" : "原输入不一致或已被占用，继续保持锁定，请稍后重试或核对区块浏览器。"}</p>}
+              {record.replacesTxid && <p>此交易替代 {record.replacesTxid.slice(0, 14)}…；两笔只能有一笔确认。</p>}
+              {!record.rawHex && <p>本机未保存这笔交易的签名原文，无法重播；可以核对后用原输入重新转账。</p>}
+            </div>}
+          </div>;
+        })}</div>}
       </section>}
 
       {tab === "market" && fullBookOpen && <FullOrderBook source={marketSource as TradeSource} symbol={activeSymbol} quote={activeQuote} onBack={closeMarketDetail} />}

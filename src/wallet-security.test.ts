@@ -23,7 +23,7 @@ const secrets = ["ShowMnemonic", "BackupMnemonic", "BackupCheck", "Password", "P
 function fixture(requireUnlock = true) {
   const state = new Map<string, unknown>(secrets.map((name) => [name, "secret-test-fixture"]));
   const setters = Object.fromEntries([...secrets, "WalletRemovalOpen", "Preview", "PreviewScanSequence", "Busy", "WalletForeground",
-    "Addresses", "FreshSnapshotKey", "WalletPage", "AutoFingerAttempted"].map((name) => [`set${name}`, vi.fn((value) => state.set(name, value))]));
+    "Addresses", "FreshSnapshotKey", "WalletPage", "Recovery", "PendingAudit", "AutoFingerAttempted"].map((name) => [`set${name}`, vi.fn((value) => state.set(name, value))]));
   let background!: () => void, foreground!: () => void;
   const scope: Record<string, any> = {
     ...setters, document: { hidden: false }, walletBackground: { current: false }, walletAccessGeneration: { current: 0 },
@@ -86,5 +86,7 @@ describe("App secret lifecycle and late authorization results", () => {
     for (const secret of secrets) expect(app.state.get(secret)).toBe("");
     expect(app.scope.wallet.lock).toHaveBeenCalledOnce();
     expect(app.scope.accessCurrent(0)).toBe(false);
+    expect(app.state.get("Recovery")).toBeNull();
+    expect(app.state.get("PendingAudit")).toBeNull();
   });
 });

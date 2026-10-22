@@ -4,6 +4,7 @@ import type { Activity, WalletSnapshot, WalletUtxo } from "./rpc";
 const KEY = "pearl-wallet-pending-outgoing-v1";
 const ACTIVE_MS = 48 * 60 * 60 * 1000;
 const TXID = /^[a-f0-9]{64}$/i;
+const RAW_TX = /^(?:[a-f0-9]{2})+$/i;
 
 type Coin = { txid: string; vout: number; valueGrains: bigint };
 type OwnedOutput = { vout: number; valueGrains: bigint };
@@ -15,10 +16,14 @@ export type PendingOutgoing = {
   createdAt: number;
   inputs: Coin[];
   ownedOutputs: OwnedOutput[];
+  rawHex?: string;
+  lastBroadcastAt?: number;
+  replacesTxid?: string;
 };
 
-export function pendingFromBroadcast(profileId: string, addresses: string[], txid: string, preview: SendPreview, now = Date.now()): PendingOutgoing {
+export function pendingFromBroadcast(profileId: string, addresses: string[], txid: string, preview: SendPreview, now = Date.now(), rawHex?: string): PendingOutgoing {
   if (!TXID.test(txid)) throw new Error("广播交易 ID 无效");
+  if (rawHex !== undefined && (rawHex.length > 20_000 || !RAW_TX.test(rawHex))) throw new Error("签名交易格式无效");
   const owned = new Set(addresses);
   return {
     profileId,
@@ -27,6 +32,7 @@ export function pendingFromBroadcast(profileId: string, addresses: string[], txi
     createdAt: now,
     inputs: preview.inputs.map((input) => ({ txid: input.txid, vout: input.vout, valueGrains: BigInt(input.valueGrains) })),
     ownedOutputs: preview.outputs.flatMap((output, vout) => owned.has(output.address) ? [{ vout, valueGrains: BigInt(output.amountGrains) }] : []),
+    ...(rawHex ? { rawHex: rawHex.toLowerCase() } : {}),
   };
 }
 
@@ -57,8 +63,14 @@ export function loadPendingOutgoing(storage: Pick<Storage, "getItem"> = localSto
           || typeof record.txid !== "string" || !TXID.test(record.txid)
           || typeof record.createdAt !== "number" || !Number.isFinite(record.createdAt)
           || !Array.isArray(record.inputs) || !Array.isArray(record.ownedOutputs)) throw new Error("待确认记录无效");
+        if (record.rawHex !== undefined && (typeof record.rawHex !== "string" || record.rawHex.length > 20_000 || !RAW_TX.test(record.rawHex))) throw new Error("签名交易记录无效");
+        if (record.lastBroadcastAt !== undefined && (typeof record.lastBroadcastAt !== "number" || !Number.isFinite(record.lastBroadcastAt) || record.lastBroadcastAt < record.createdAt)) throw new Error("重播时间无效");
+        if (record.replacesTxid !== undefined && (typeof record.replacesTxid !== "string" || !TXID.test(record.replacesTxid))) throw new Error("替代交易 ID 无效");
         return [{ profileId: record.profileId, pool: record.pool, txid: record.txid, createdAt: record.createdAt,
-          inputs: record.inputs.map(parseCoin), ownedOutputs: record.ownedOutputs.map(parseOutput) }];
+          inputs: record.inputs.map(parseCoin), ownedOutputs: record.ownedOutputs.map(parseOutput),
+          ...(typeof record.rawHex === "string" ? { rawHex: record.rawHex.toLowerCase() } : {}),
+          ...(typeof record.lastBroadcastAt === "number" ? { lastBroadcastAt: record.lastBroadcastAt } : {}),
+          ...(typeof record.replacesTxid === "string" ? { replacesTxid: record.replacesTxid.toLowerCase() } : {}) }];
       } catch { return []; }
     });
   } catch { return []; }
@@ -77,8 +89,9 @@ export function reconcilePendingOutgoing(records: PendingOutgoing[], profileId: 
   const knownOutputs = new Set([...snapshot.utxos, ...(snapshot.pendingOutputs ?? [])]
     .map((coin) => `${coin.txid.toLowerCase()}:${coin.vout}`));
   return records.filter((item) => item.profileId !== profileId || item.pool !== pool
-    || !confirmed.has(item.txid.toLowerCase())
-    || item.ownedOutputs.some((output) => !knownOutputs.has(`${item.txid.toLowerCase()}:${output.vout}`)));
+    || (!item.replacesTxid || !confirmed.has(item.replacesTxid.toLowerCase()))
+      && (!confirmed.has(item.txid.toLowerCase())
+        || item.ownedOutputs.some((output) => !knownOutputs.has(`${item.txid.toLowerCase()}:${output.vout}`))));
 }
 
 export function projectWalletSnapshot(snapshot: WalletSnapshot, records: PendingOutgoing[], now = Date.now()): {
@@ -97,6 +110,7 @@ export function projectWalletSnapshot(snapshot: WalletSnapshot, records: Pending
   let pendingGrains = snapshot.pendingGrains ?? 0n;
   let estimated = false;
   for (const record of records) {
+    if (record.replacesTxid && visible.get(record.replacesTxid.toLowerCase())?.confirmations) continue;
     if (visible.get(record.txid.toLowerCase())?.confirmations
       && record.ownedOutputs.every((output) => knownCoins.has(`${record.txid.toLowerCase()}:${output.vout}`))) continue;
     const deltaGrains = record.ownedOutputs.reduce((sum, output) => sum + output.valueGrains, 0n)
@@ -108,7 +122,9 @@ export function projectWalletSnapshot(snapshot: WalletSnapshot, records: Pending
       const key = `${input.txid.toLowerCase()}:${input.vout}`;
       spent.add(key);
     }
-    if (now - record.createdAt > ACTIVE_MS) { staleTxids.add(record.txid.toLowerCase()); continue; }
+    if (record.replacesTxid && (visible.has(record.replacesTxid.toLowerCase())
+      || (snapshot.pendingOutputs ?? []).some((output) => output.txid.toLowerCase() === record.replacesTxid))) continue;
+    if (now - (record.lastBroadcastAt ?? record.createdAt) > ACTIVE_MS) { staleTxids.add(record.txid.toLowerCase()); continue; }
     estimated = true;
     for (const input of record.inputs) {
       const key = `${input.txid.toLowerCase()}:${input.vout}`;

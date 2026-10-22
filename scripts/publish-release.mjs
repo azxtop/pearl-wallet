@@ -22,11 +22,12 @@ if (localTag.status !== 0 || localTag.stdout.trim() !== commit) throw new Error(
 const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'PearlWalletRelease' };
 const notes = `Pearl Wallet ${version} 预发布版
 
-- 修复转账 MAX 和百分比按钮在金额超过 1,000 PRL 时填入千位逗号，导致误报「金额最多保留 8 位小数」的问题。
-- 手动输入或粘贴金额时移除千位逗号；修改金额时清除旧错误提示。
-- 校正 SafeTrade 旧市场成交测试样本的时间，使其仍落在切换日期之前。
+- 待确认转账超过 48 小时后继续保护原输入，在「全部记录」提供双浏览器核对、原交易重播和使用原输入重新转账。
+- 新广播交易在本机保存签名原文，以便重播；旧版记录未保存原文时仍可核对并重新构造转账。
+- 替代交易只使用原交易的输入；如果原交易先确认，自动清理替代记录，避免重复计入找零。
+- 完整校验加密钱包地址，避免保存格式错误的 Pearl 地址。
 
-验证：134 项测试通过，类型检查、Android 构建及正式版签名校验通过。
+验证：141 项测试通过，类型检查、Android 构建及正式版签名校验通过。
 
 此版本经过有范围的技术复核，尚不属于第三方独立安全审计，也未完成真实主网转账测试。
 APK 与旧正式版签名一致，可覆盖升级并保留钱包数据。debug 版签名不同，请勿通过卸载旧钱包来切换版本；先确保助记词已离线备份。
