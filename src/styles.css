@@ -260,6 +260,15 @@ h2 { font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
 .send-address-heading span { color: #84909c; font-size: 13px; font-weight: 600; }
 .send-address-heading button { border: 0; background: transparent; color: #277d59; font-size: 13px; font-weight: 650; padding: 2px 0 2px 12px; }
 .sheet-backdrop { position: fixed; inset: 0; z-index: 90; display: flex; align-items: flex-end; justify-content: center; background: #10181599; }
+.update-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 26px; background: #10181570; }
+.update-dialog { width: 100%; max-width: 340px; padding: 27px 24px 22px; border: 1px solid #e3e9e5; border-radius: 20px; background: #f9fbf9; box-shadow: 0 16px 60px #10201925; outline: none; }
+.update-version { display: inline-block; padding: 5px 9px; margin-bottom: 16px; border-radius: 7px; background: #e7f0e9; color: #315944; font-size: 12px; font-weight: 650; }
+.update-dialog h2 { margin: 0 0 9px; color: #18251d; font-size: 21px; }
+.update-dialog p { margin: 0; color: #7b8780; font-size: 13px; line-height: 1.6; }
+.update-dialog .update-error { margin-top: 12px; color: #b94750; overflow-wrap: anywhere; }
+.update-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 25px; }
+.update-actions button { min-height: 43px; border: 1px solid #dce5de; border-radius: 10px; background: transparent; color: #67766c; font-size: 14px; }
+.update-actions .primary { margin: 0; padding: 10px; background: #214c34; border-color: #214c34; color: #fff; }
 .picker-sheet { width: 100%; max-width: 640px; max-height: min(85dvh, 850px); display: flex; flex-direction: column; background: #fff; border-radius: 22px 22px 0 0; padding: 10px 18px calc(20px + env(safe-area-inset-bottom)); box-shadow: 0 -12px 35px #0b1b1420; }
 .wallet-removal-sheet { gap: 2px; overflow-y: auto; }
 .wallet-removal-warning { margin: 0 0 18px; padding: 14px; border-radius: 12px; background: #fff7f3; color: #8b453c; font-size: 13px; line-height: 1.6; }

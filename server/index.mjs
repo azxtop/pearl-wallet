@@ -11,6 +11,7 @@ import { createHyperliquidFeed } from './hyperliquid.mjs';
 import { createHyperliquidFanout } from './hyperliquid-fanout.mjs';
 import { createLighterFeed } from './lighter.mjs';
 import { createAsterFeed } from './aster.mjs';
+import { createGateFeed } from './gate.mjs';
 import { createTradeHistory } from './trade-history.mjs';
 import { BACKFILL_SECONDS, fetchPersonalTrades, mergePersonalTrades, personalTradeAverages } from './personal-trades.mjs';
 
@@ -55,9 +56,9 @@ const streamClients = new Set();
 const streamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 const fullDepthClients = new Set();
 const fullDepthStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
-const marketDepthClients = { hyperliquid: new Set(), lighter: new Set(), aster: new Set() };
-const marketDepthSequence = { hyperliquid: 0, lighter: 0, aster: 0 };
-const marketDepthUpdatedAt = { hyperliquid: 0, lighter: 0, aster: 0 };
+const marketDepthClients = { hyperliquid: new Set(), lighter: new Set(), aster: new Set(), gate: new Set() };
+const marketDepthSequence = { hyperliquid: 0, lighter: 0, aster: 0, gate: 0 };
+const marketDepthUpdatedAt = { hyperliquid: 0, lighter: 0, aster: 0, gate: 0 };
 const marketDepthStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 const wprlStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 const wprlStreamClients = new Set();
@@ -67,6 +68,8 @@ const lighterStreamServer = new WebSocketServer({ noServer: true, maxPayload: 10
 const lighterFanout = createHyperliquidFanout();
 const asterStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 const asterFanout = createHyperliquidFanout();
+const gateStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
+const gateFanout = createHyperliquidFanout();
 const accountStreamServer = new WebSocketServer({ noServer: true, maxPayload: 1024 });
 const accountStreamTickets = new Map();
 const accountStreams = new Map();
@@ -212,11 +215,23 @@ const asterFeed = createAsterFeed({
   },
 });
 
+const gateFeed = createGateFeed({
+  storePath: resolve(DATA_DIR, 'gate-pearl-market.sqlite'),
+  onFrame: (frame) => {
+    if (frame.type === 'full-depth') broadcastMarketDepth('gate', frame.depth, frame.updatedAt);
+    else {
+      if (frame.type === 'trades') tradeHistory.add('gate', 'PEARL/USDT', frame.trades);
+      gateFanout.broadcast(frame);
+    }
+  },
+});
+
 function selectedMarket(source) {
   if (source === 'safetrade') return SAFETRADE_COMPAT_PAIR;
   if (source === 'hyperliquid') return hyperliquidFeed.contract()?.pair ?? null;
   if (source === 'lighter') return lighterFeed.contract()?.marketId == null ? null : String(lighterFeed.contract().marketId);
   if (source === 'aster') return 'PEARL/USDT';
+  if (source === 'gate') return 'PEARL/USDT';
   return null;
 }
 
@@ -507,15 +522,15 @@ async function handle(request, response) {
     try { return json(response, 200, JSON.parse(readFileSync(process.env.PEARL_UPDATE_FILE || resolve('server/update.json'), 'utf8'))); }
     catch { return json(response, 503, { error: 'Update metadata unavailable' }); }
   }
-  const marketDepthRoute = /^\/api\/(hyperliquid|lighter|aster)\/depth$/.exec(url.pathname);
+  const marketDepthRoute = /^\/api\/(hyperliquid|lighter|aster|gate)\/depth$/.exec(url.pathname);
   if (request.method === 'GET' && marketDepthRoute) {
     const source = marketDepthRoute[1];
-    const depth = source === 'hyperliquid' ? hyperliquidFeed.getFullDepth() : source === 'lighter' ? lighterFeed.getFullDepth() : asterFeed.getFullDepth();
+    const depth = source === 'hyperliquid' ? hyperliquidFeed.getFullDepth() : source === 'lighter' ? lighterFeed.getFullDepth() : source === 'gate' ? gateFeed.getFullDepth() : asterFeed.getFullDepth();
     return depth.asks.length || depth.bids.length
       ? json(response, 200, { sequence: marketDepthSequence[source], depth, updatedAt: marketDepthUpdatedAt[source] || Date.now() })
       : json(response, 503, { error: '订单簿正在同步' });
   }
-  const tradeHistoryRoute = /^\/api\/(safetrade|hyperliquid|lighter|aster)\/trades$/.exec(url.pathname);
+  const tradeHistoryRoute = /^\/api\/(safetrade|hyperliquid|lighter|aster|gate)\/trades$/.exec(url.pathname);
   if (request.method === 'GET' && tradeHistoryRoute) {
     const source = tradeHistoryRoute[1], market = selectedMarket(source);
     if (!market) return json(response, 503, { error: '市场正在同步' });
@@ -570,6 +585,17 @@ async function handle(request, response) {
   }
   if (request.method === 'GET' && url.pathname === '/api/aster/status') {
     return json(response, 200, { ...asterFanout.stats(), contract: asterFeed.contract() });
+  }
+  if (request.method === 'GET' && url.pathname === '/api/gate/overview') {
+    return json(response, 200, gateFeed.getOverview());
+  }
+  if (request.method === 'GET' && url.pathname === '/api/gate/candles') {
+    const interval = url.searchParams.get('interval') || '1m';
+    if (!PERIODS[interval]) return json(response, 400, { error: 'Unsupported interval' });
+    return json(response, 200, gateFeed.getCandles(interval));
+  }
+  if (request.method === 'GET' && url.pathname === '/api/gate/status') {
+    return json(response, 200, { ...gateFanout.stats(), ...gateFeed.getStatus(), contract: gateFeed.contract() });
   }
   if (request.method === 'GET' && url.pathname === '/api/safetrade/depth') {
     const snapshot = publicFeed.getFullDepth();
@@ -669,7 +695,7 @@ server.on('upgrade', (request, socket, head) => {
   let pathname;
   try { pathname = new URL(request.url || '/', `http://${HOST}:${PORT}`).pathname; }
   catch { socket.destroy(); return; }
-  if ((origin && !ALLOWED_ORIGINS.has(origin)) || (pathname !== '/api/safetrade/stream' && pathname !== '/api/safetrade/depth-stream' && pathname !== '/api/safetrade/account-stream' && pathname !== '/api/wprl/stream' && pathname !== '/api/hyperliquid/stream' && pathname !== '/api/lighter/stream' && pathname !== '/api/aster/stream' && pathname !== '/api/hyperliquid/depth-stream' && pathname !== '/api/lighter/depth-stream' && pathname !== '/api/aster/depth-stream')) {
+  if ((origin && !ALLOWED_ORIGINS.has(origin)) || (pathname !== '/api/safetrade/stream' && pathname !== '/api/safetrade/depth-stream' && pathname !== '/api/safetrade/account-stream' && pathname !== '/api/wprl/stream' && pathname !== '/api/hyperliquid/stream' && pathname !== '/api/lighter/stream' && pathname !== '/api/aster/stream' && pathname !== '/api/hyperliquid/depth-stream' && pathname !== '/api/lighter/depth-stream' && pathname !== '/api/aster/depth-stream' && pathname !== '/api/gate/stream' && pathname !== '/api/gate/depth-stream')) {
     socket.destroy();
     return;
   }
@@ -685,7 +711,7 @@ server.on('upgrade', (request, socket, head) => {
     });
     return;
   }
-  const marketDepthRoute = /^\/api\/(hyperliquid|lighter|aster)\/depth-stream$/.exec(pathname);
+  const marketDepthRoute = /^\/api\/(hyperliquid|lighter|aster|gate)\/depth-stream$/.exec(pathname);
   if (marketDepthRoute) {
     const source = marketDepthRoute[1], clients = marketDepthClients[source];
     if (clients.size >= 100) { socket.destroy(); return; }
@@ -694,7 +720,7 @@ server.on('upgrade', (request, socket, head) => {
       client.isAlive = true;
       client.on('pong', () => { client.isAlive = true; });
       client.on('close', () => clients.delete(client));
-      const depth = source === 'hyperliquid' ? hyperliquidFeed.getFullDepth() : source === 'lighter' ? lighterFeed.getFullDepth() : asterFeed.getFullDepth();
+      const depth = source === 'hyperliquid' ? hyperliquidFeed.getFullDepth() : source === 'lighter' ? lighterFeed.getFullDepth() : source === 'gate' ? gateFeed.getFullDepth() : asterFeed.getFullDepth();
       if (depth.asks.length || depth.bids.length) client.send(JSON.stringify({ type: 'depth-snapshot', sequence: marketDepthSequence[source], depth, updatedAt: marketDepthUpdatedAt[source] || Date.now() }));
     });
     return;
@@ -785,6 +811,23 @@ server.on('upgrade', (request, socket, head) => {
     });
     return;
   }
+  if (pathname === '/api/gate/stream') {
+    if (gateFanout.clients.size >= 500) { socket.destroy(); return; }
+    gateStreamServer.handleUpgrade(request, socket, head, (client) => {
+      gateFanout.clients.add(client);
+      client.marketInterval = '1m';
+      client.isAlive = true;
+      client.on('pong', () => { client.isAlive = true; });
+      client.on('message', (message) => {
+        let data;
+        try { data = JSON.parse(String(message)); } catch { return; }
+        if (data?.type === 'subscribe' && PERIODS[data.interval]) client.marketInterval = data.interval;
+      });
+      client.on('close', () => gateFanout.clients.delete(client));
+      gateFanout.send(client, { type: 'overview', data: gateFeed.getOverview() });
+    });
+    return;
+  }
   if (streamClients.size >= 100) { socket.destroy(); return; }
   streamServer.handleUpgrade(request, socket, head, (client) => {
     streamClients.add(client);
@@ -803,7 +846,7 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 setInterval(() => {
-  const clients = [...streamClients, ...fullDepthClients, ...marketDepthClients.hyperliquid, ...marketDepthClients.lighter, ...marketDepthClients.aster, ...wprlStreamClients, ...hyperliquidFanout.clients, ...lighterFanout.clients, ...asterFanout.clients, ...[...accountStreams.values()].flatMap((group) => [...group])];
+  const clients = [...streamClients, ...fullDepthClients, ...marketDepthClients.hyperliquid, ...marketDepthClients.lighter, ...marketDepthClients.aster, ...marketDepthClients.gate, ...wprlStreamClients, ...hyperliquidFanout.clients, ...lighterFanout.clients, ...asterFanout.clients, ...gateFanout.clients, ...[...accountStreams.values()].flatMap((group) => [...group])];
   for (const client of clients) {
     if (!client.isAlive) { client.terminate(); continue; }
     client.isAlive = false;
@@ -821,6 +864,10 @@ server.listen(PORT, HOST, function () {
   if (process.env.WPRL_ENABLED === '1') wprlFeed.start();
   if (process.env.HYPERLIQUID_ENABLED !== '0') void hyperliquidFeed.start();
   if (process.env.LIGHTER_ENABLED !== '0') void lighterFeed.start();
+  if (process.env.GATE_ENABLED !== '0') {
+    const startGate = () => { void gateFeed.start().catch((error) => { console.warn('Gate start:', error.message); setTimeout(startGate, 30_000).unref(); }); };
+    startGate();
+  }
   if (process.env.ASTER_ENABLED !== '0') {
     const startAster = () => { void asterFeed.start().catch((error) => { console.warn('Aster start:', error.message); setTimeout(startAster, 30_000).unref(); }); };
     startAster();

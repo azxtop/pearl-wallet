@@ -9,6 +9,7 @@ const WPRL_KEY = 'pearl-wprl-market-cache-v1';
 const HYPERLIQUID_KEY = 'pearl-hyperliquid-io-prl-market-cache-v1';
 const LIGHTER_KEY = 'pearl-lighter-market-cache-v1';
 const ASTER_KEY = 'pearl-aster-pearl-market-cache-v1';
+const GATE_KEY = 'pearl-gate-pearl-spot-cache-v1';
 const EMPTY = (): PublicMarketCache => ({ overview: null, series: {} });
 const validTime = (value: unknown) => typeof value === 'number' && Number.isFinite(value)
   && value > Date.now() - 7 * 24 * 60 * 60 * 1000 && value <= Date.now() + 60_000;
@@ -85,5 +86,15 @@ export function loadAsterMarketCache(): PublicMarketCache {
 
 export function saveAsterMarketCache(cache: PublicMarketCache): void {
   try { localStorage.setItem(ASTER_KEY, JSON.stringify(cache)); }
+  catch { /* Public cache is optional if storage is full. */ }
+}
+
+export function loadGateMarketCache(): PublicMarketCache {
+  try { return parsePublicMarketCache(localStorage.getItem(GATE_KEY)); }
+  catch { return EMPTY(); }
+}
+
+export function saveGateMarketCache(cache: PublicMarketCache): void {
+  try { localStorage.setItem(GATE_KEY, JSON.stringify(cache)); }
   catch { /* Public cache is optional if storage is full. */ }
 }

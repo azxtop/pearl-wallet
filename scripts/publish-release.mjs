@@ -22,12 +22,12 @@ if (localTag.status !== 0 || localTag.stdout.trim() !== commit) throw new Error(
 const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'PearlWalletRelease' };
 const notes = `Pearl Wallet ${version} 预发布版
 
-- 待确认转账超过 48 小时后继续保护原输入，在「全部记录」提供双浏览器核对、原交易重播和使用原输入重新转账。
-- 新广播交易在本机保存签名原文，以便重播；旧版记录未保存原文时仍可核对并重新构造转账。
-- 替代交易只使用原交易的输入；如果原交易先确认，自动清理替代记录，避免重复计入找零。
-- 完整校验加密钱包地址，避免保存格式错误的 Pearl 地址。
+- 新增 Gate PEARL/USDT 现货行情：六个 K 线周期、完整盘口、最新成交与历史筛选。
+- Gate 行情由服务器持续采集，WebSocket 实时更新盘口与成交，并保存 K 线和近期成交记录。
+- 新增应用更新提示：离开 Wallet 进入 Market 或设置后才检查和提示更新，支持稍后提醒。
+- 保留手动检查更新；GitHub 下载为主，服务器下载作为备用。
 
-验证：141 项测试通过，类型检查、Android 构建及正式版签名校验通过。
+验证：148 项测试通过，类型检查、Android 构建及正式版签名校验通过；测试机已检查 Gate 行情、完整盘口、成交筛选与更新提示。
 
 此版本经过有范围的技术复核，尚不属于第三方独立安全审计，也未完成真实主网转账测试。
 APK 与旧正式版签名一致，可覆盖升级并保留钱包数据。debug 版签名不同，请勿通过卸载旧钱包来切换版本；先确保助记词已离线备份。

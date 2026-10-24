@@ -45,7 +45,7 @@ test('public market never includes account data; connection token gates balances
   oldDb.close();
   const child = spawn(process.execPath, ['server/index.mjs'], {
     cwd: process.cwd(),
-    env: { ...process.env, PEARL_SERVER_PORT: '0', PEARL_DATA_DIR: dataDir, PEARL_CREDENTIAL_KEY: randomBytes(32).toString('base64'), SAFETRADE_API_BASE: `http://127.0.0.1:${upstream.address().port}`, SAFETRADE_WS_DISABLED: '1' },
+    env: { ...process.env, PEARL_SERVER_PORT: '0', PEARL_DATA_DIR: dataDir, PEARL_CREDENTIAL_KEY: randomBytes(32).toString('base64'), SAFETRADE_API_BASE: `http://127.0.0.1:${upstream.address().port}`, SAFETRADE_WS_DISABLED: '1', GATE_ENABLED: '0' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   try {
@@ -60,6 +60,19 @@ test('public market never includes account data; connection token gates balances
       child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`Server exited ${code}`)); });
     });
     const base = `http://127.0.0.1:${port}/api/safetrade`;
+    const gateBase = `http://127.0.0.1:${port}/api/gate`;
+    assert.equal((await (await fetch(`${gateBase}/overview`)).json()).pair, 'PEARL/USDT');
+    assert.deepEqual((await (await fetch(`${gateBase}/trades`)).json()).trades, []);
+    assert.equal((await fetch(`${gateBase}/depth`)).status, 503);
+    assert.equal((await fetch(`${gateBase}/candles?interval=bad`)).status, 400);
+    const gateStream = new WebSocket(`ws://127.0.0.1:${port}/api/gate/stream`);
+    const gateFrame = await new Promise((resolve, reject) => {
+      gateStream.once('message', (message) => resolve(JSON.parse(String(message))));
+      gateStream.once('error', reject);
+    });
+    assert.equal(gateFrame.data.pair, 'PEARL/USDT');
+    assert.equal('balances' in gateFrame.data, false);
+    gateStream.close();
     const market = await (await fetch(`${base}?interval=1m`)).json();
     assert.equal(market.price, 1.5);
     assert.equal(market.pair, 'PRL/USDT');

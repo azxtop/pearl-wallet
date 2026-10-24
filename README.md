@@ -1,4 +1,4 @@
-# Pearl Wallet 0.2.43
+# Pearl Wallet 0.2.44
 
 **官方网站：** https://pearlwallet.az1993.xyz/ · **Android 下载：** https://github.com/azxtop/pearl-wallet/releases
 
@@ -6,7 +6,7 @@
 
 当前支持助记词导入，尚不支持单独私钥导入。应用未经独立安全审计；只需查看余额与交易时，建议使用观察地址。
 
-Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；Market 可切换 SafeTrade PEARL/USDT、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid PRL/USDC 永续、Lighter PRL/USDC 永续与 Aster PEARL/USDT 永续，SafeTrade 还可只读展示 PEARL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
+Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账；Market 可切换 SafeTrade、Gate PEARL/USDT 现货、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid PRL/USDC 永续、Lighter PRL/USDC 永续与 Aster PEARL/USDT 永续，SafeTrade 还可只读展示 PEARL、USDT 余额；Setting 管理解锁、指纹、密码、备份和版本。
 
 ## 已实现
 
@@ -21,7 +21,7 @@ Pearl 主网安卓钱包。Wallet 显示链上余额与交易、收款和转账�
 - 转账广播成功后，在本机保存交易 ID、所花输入和找零金额；浏览器尚未列出 0 确认转出时，Activity 立即显示待确认记录，余额显示估算找零，并阻止复用已广播的输入。浏览器同步完成后以链上数据为准。
 - 发送页显示钱包余额、按当前费率计算的最多可发送金额、25%/50%/75%/MAX 快捷金额与经济/标准/优先三档费率。费率分别为 1/2/4 grains/vB，预览按所选费率构造交易并显示实际估算手续费；确认速度不保证。
 - App 前台每 5 秒用主浏览器扫描余额和 UTXO，仅在结果变化时读取交易历史；尝试连接浏览器 SSE，断线后逐步延长重连时间。主浏览器请求失败后暂停 60 秒起，切到备用浏览器并放慢检查，冷却结束后自动重试主浏览器。App 进入手机后台时暂停连接与轮询，返回前台立即同步。
-- Market 页面可切换 SafeTrade PEARL/USDT、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid PRL/USDC 永续、Lighter PRL/USDC 永续与 Aster PEARL/USDT 永续。SafeTrade 展示 K 线、24 小时行情、左右并排买卖盘和最新成交；WPRL 展示指定链上交易池的 K 线、流动性和成交；永续来源展示公开 K 线、盘口、成交、标记价、资金费率和持仓量。K 线可切换周期、双指缩放、横向拖动和点选查看单根详情；服务器返回最近 300 根。公开行情不需要个人 API Key。用户可在 App 输入自己的 SafeTrade 只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PEARL、USDT 余额。用户可在 SafeTrade K 线设置中选择显示个人成交标记、买卖加权均价和单根 K 线的成交详情；历史成交由服务器加密保存，断开连接时删除。App 不含下单和提款功能。
+- Market 页面可切换 SafeTrade、Gate PEARL/USDT 现货、以太坊 Uniswap V3 WPRL/USDT、Hyperliquid PRL/USDC 永续、Lighter PRL/USDC 永续与 Aster PEARL/USDT 永续。SafeTrade 展示 K 线、24 小时行情、左右并排买卖盘和最新成交；WPRL 展示指定链上交易池的 K 线、流动性和成交；永续来源展示公开 K 线、盘口、成交、标记价、资金费率和持仓量。K 线可切换周期、双指缩放、横向拖动和点选查看单根详情；服务器返回最近 300 根。公开行情不需要个人 API Key。用户可在 App 输入自己的 SafeTrade 只读 Key 和 Secret，服务器验证后加密保存，仅向该连接的随机令牌返回 PEARL、USDT 余额。用户可在 SafeTrade K 线设置中选择显示个人成交标记、买卖加权均价和单根 K 线的成交详情；历史成交由服务器加密保存，断开连接时删除。App 不含下单和提款功能。
 - SafeTrade 现货资产的主数字包含可用余额和挂单占用，另显示两者明细与按 PEARL/USDT 现货价计算的预估总资产（USDT）。
 - 常规页面允许系统截屏；创建和导入钱包的助记词界面，以及 Setting 中显示助记词时，Android 启用防截屏。SafeTrade 前台每 5 秒更新公开行情，服务器按端点缓存 5–10 秒；WPRL 前台接收链上成交推送，并定时核对公开行情。
 - 检查 HTTPS 版本清单、下载并校验 APK 的 SHA-256，再交给 Android 安装。更新 APK 必须与已安装应用使用同一签名密钥。
@@ -38,7 +38,7 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.43-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.43-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.44-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.44-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 
@@ -58,11 +58,15 @@ WPRL 行情使用以太坊主网 Uniswap V3 的 WPRL/USDT 交易池 `0x89a67c6de
 
 Hyperliquid 只读行情默认使用 EntropyIO 的 HIP-3 `io:PRL` 永续合约，抵押与计价币为 USDC，在 App 显示为 PRL/USDC。服务端用一条上游 WebSocket 订阅 1 分钟 K 线、L2 盘口、成交和资产上下文，再通过 `/api/hyperliquid/stream` 分发给 Market 前台；`/api/hyperliquid/overview`、`/api/hyperliquid/candles?interval=1m` 提供 REST 兜底。服务端先从官方 `candleSnapshot` 补最近最多 5000 根 1 分钟 K 线，此后通过实时推送与每两分钟补漏，在 `/var/lib/pearlwallet/hyperliquid-market.sqlite` 长期保存分钟线并汇总为 5 分钟至日线。供应商只能补最近约 5000 根，长时间停机超出此窗口会留下可见的时间缺口。默认逐笔转发成交；Hyperliquid 页达到 100 个连接或出站行情持续超过 5 Mbps 一分钟时，每秒只向客户端发送最新最多 10 笔并标明跳过数量；连接低于 60 且低于 2 Mbps 持续五分钟后恢复逐笔。慢客户端单独降采样。原 BTC 示例 K 线与新 PRL K 线按合约标识分别存储；服务端可用 `HYPERLIQUID_COIN` 和 `HYPERLIQUID_DEX` 修改订阅市场。
 
+Gate 现货源使用 `PEARL_USDT` 公开行情，不需要 API Key。服务端通过一条 Gate WebSocket 订阅行情、成交、六种周期 K 线和盘口增量；盘口使用自带初始快照的 V2 400 档推送，发现序号缺口后重新订阅，REST 只作断线兜底。`/api/gate/overview`、`/api/gate/candles?interval=1m`、`/api/gate/depth`、`/api/gate/trades` 提供概览、K 线、完整盘口和可筛选的公开成交；`/api/gate/stream`、`/api/gate/depth-stream` 提供推送。K 线在 `gate-pearl-market.sqlite` 长期保存，公开成交沿用服务器 30 天保存策略；App 分源缓存并预取各周期。设置 `GATE_ENABLED=0` 可关闭采集。
+
 ## 已知限制
 
 无法保证钱包“100% 安全”。签名测试使用模拟 UTXO，没有广播真实主网转账。链上余额依赖 `pearlchain.live`，失败时依赖 PearlResearch Blockbook，不是本机完整节点验证；前 20 个地址以外的资产目前不会自动发现。观察模式只读，但所查询的地址会发送给当前使用的浏览器。不要在完成实机小额转账与独立安全审计前存入有价值的资产。
 
 ## APK 更新
+
+原生 App 离开 Wallet 并进入 Market 或 Setting 后才自动检查更新；Wallet 中不发起自动检查，也不展示更新弹窗。检查失败静默重试，正常检查间隔 6 小时。提示框提供“稍后”和“立即更新”，同一版本暂缓 24 小时；只有用户主动点击更新才下载安装包。设置页仍可手动检查更新。
 
 更新检查优先读取 GitHub 仓库的 `server/update.json`，失败时读取现有 HTTPS 服务器。新版 App 优先下载 GitHub Release 的正式签名 APK，失败时下载服务器副本。`apkUrl` 保留服务器地址供 0.2.8 及更早版本升级；`githubApkUrl` 提供新版的首选地址。两份 APK 必须具有相同的 SHA-256。
 
