@@ -60,6 +60,16 @@ test('public market never includes account data; connection token gates balances
       child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`Server exited ${code}`)); });
     });
     const base = `http://127.0.0.1:${port}/api/safetrade`;
+    const usage = `http://127.0.0.1:${port}/api/market-usage`;
+    assert.equal((await fetch(usage)).status, 405);
+    assert.equal((await fetch(usage, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://untrusted.example' }, body: JSON.stringify({ firstRunAt: Date.now() }) })).status, 403);
+    assert.equal((await fetch(usage, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ firstRunAt: Date.now(), address: 'not-collected' }) })).status, 400);
+    const timestamp = Date.now() - 1000;
+    for (let entry = 0; entry < 2; entry++) assert.equal((await fetch(usage, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' }, body: JSON.stringify({ firstRunAt: timestamp }) })).status, 204);
+    const usageDb = new DatabaseSync(join(dataDir, 'market-usage.sqlite'), { readOnly: true });
+    assert.equal(usageDb.prepare('SELECT COUNT(*) AS n FROM market_devices').get().n, 1);
+    assert.equal(usageDb.prepare('SELECT COUNT(*) AS n FROM market_activity').get().n, 1);
+    usageDb.close();
     const gateBase = `http://127.0.0.1:${port}/api/gate`;
     assert.equal((await (await fetch(`${gateBase}/overview`)).json()).pair, 'PEARL/USDT');
     assert.deepEqual((await (await fetch(`${gateBase}/trades`)).json()).trades, []);

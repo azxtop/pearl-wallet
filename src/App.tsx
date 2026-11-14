@@ -10,6 +10,7 @@ import { loadLatestUpdate } from "./lib/update-check";
 import { useUpdateNotice } from "./lib/use-update-notice";
 import { UpdateNotice } from "./UpdateNotice";
 import { useGateMarket } from "./lib/use-gate-market";
+import { createMarketUsageTracker } from "./lib/market-usage";
 import { loadPendingOutgoing, pendingFromBroadcast, projectWalletSnapshot, reconcilePendingOutgoing, savePendingOutgoing, type PendingOutgoing } from "./lib/pending-outgoing";
 import { auditPendingOutgoing, type PendingAudit } from "./lib/pending-recovery";
 import { broadcastViaExplorer } from "./lib/explorer";
@@ -62,7 +63,7 @@ function loadPersonalChartRange(): PersonalTradeRange {
 }
 type WalletPage = "home" | "send" | "receive" | "history";
 const UNLOCK_KEY = "pearl-wallet-require-unlock-v1";
-const APP_VERSION = "0.2.44";
+const APP_VERSION = "0.2.45";
 const PROJECT_URL = "https://pearlwallet.az1993.xyz/";
 const SOURCE_URL = "https://github.com/azxtop/pearl-wallet";
 const CONTACT_EMAIL = "az1993515909@gmail.com";
@@ -574,6 +575,8 @@ export default function App() {
     return localStorage.getItem(UNLOCK_KEY) === "false" && active?.kind === "wallet" && active.addresses.length ? active.addresses : null;
   });
   const [tab, setTab] = useState<Tab>("wallet");
+  const [marketUsage] = useState(createMarketUsageTracker);
+  useEffect(() => { marketUsage.enter(tab, !document.hidden); }, [tab, marketUsage]);
   const [marketSource, setMarketSource] = useState<MarketSource>(() => { const source = localStorage.getItem("pearl-market-source-v1"); return source === "wprl" || source === "hyperliquid" || source === "lighter" || source === "aster" || source === "gate" ? source : "safetrade"; });
   const [walletPage, setWalletPage] = useState<WalletPage>("home");
   const [snapshotCache, setSnapshotCache] = useState<SnapshotCache>(loadSnapshotCache);

@@ -22,12 +22,13 @@ if (localTag.status !== 0 || localTag.stdout.trim() !== commit) throw new Error(
 const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'PearlWalletRelease' };
 const notes = `Pearl Wallet ${version} 预发布版
 
-- 新增 Gate PEARL/USDT 现货行情：六个 K 线周期、完整盘口、最新成交与历史筛选。
-- Gate 行情由服务器持续采集，WebSocket 实时更新盘口与成交，并保存 K 线和近期成交记录。
-- 新增应用更新提示：离开 Wallet 进入 Market 或设置后才检查和提示更新，支持稍后提醒。
-- 保留手动检查更新；GitHub 下载为主，服务器下载作为备用。
+- 新增行情活跃统计：首次运行此版本时保存固定毫秒时间戳，后续升级沿用。
+- 仅每次进入 Market 时发送一次时间戳；Wallet、设置、后台以及切换行情来源或周期不触发上报。
+- 没有定时心跳、失败重试或补报；请求正文不含钱包地址、余额、交易、API Key、版本或设备信息。
+- 服务器按北京时间去重统计行情日活、周活和月活；统计库不保存 IP，该接口关闭 Nginx 访问日志。
+- 时间戳碰撞、清除应用数据或重装可能影响计数，结果为行情活跃设备估算，不代表钱包总用户数。
 
-验证：148 项测试通过，类型检查、Android 构建及正式版签名校验通过；测试机已检查 Gate 行情、完整盘口、成交筛选与更新提示。
+验证：154 项测试通过，类型检查、Android 构建及正式版签名校验通过。
 
 此版本经过有范围的技术复核，尚不属于第三方独立安全审计，也未完成真实主网转账测试。
 APK 与旧正式版签名一致，可覆盖升级并保留钱包数据。debug 版签名不同，请勿通过卸载旧钱包来切换版本；先确保助记词已离线备份。

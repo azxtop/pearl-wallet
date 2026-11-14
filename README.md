@@ -1,4 +1,4 @@
-# Pearl Wallet 0.2.44
+# Pearl Wallet 0.2.45
 
 **官方网站：** https://pearlwallet.az1993.xyz/ · **Android 下载：** https://github.com/azxtop/pearl-wallet/releases
 
@@ -38,7 +38,7 @@ cd android
 ./gradlew.bat assembleDebug assembleRelease
 ```
 
-APK 位于 `releases/`。`PearlWallet-0.2.44-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.44-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
+APK 位于 `releases/`。`PearlWallet-0.2.45-debug.apk` 可覆盖此前安装的 debug 版；`PearlWallet-0.2.45-release.apk` 使用独立正式签名，不能直接覆盖 debug 版。切换签名前先备份助记词，并确认可恢复钱包。
 
 正式签名材料在 `private/pearlwallet-release.jks` 和 `android/release-signing.properties`，两者已被 `.gitignore` 排除。**必须一起离线备份**；丢失签名密钥后无法为已安装的正式版发布可覆盖更新。
 
@@ -63,6 +63,12 @@ Gate 现货源使用 `PEARL_USDT` 公开行情，不需要 API Key。服务端�
 ## 已知限制
 
 无法保证钱包“100% 安全”。签名测试使用模拟 UTXO，没有广播真实主网转账。链上余额依赖 `pearlchain.live`，失败时依赖 PearlResearch Blockbook，不是本机完整节点验证；前 20 个地址以外的资产目前不会自动发现。观察模式只读，但所查询的地址会发送给当前使用的浏览器。不要在完成实机小额转账与独立安全审计前存入有价值的资产。
+
+## 行情活跃统计
+
+原生 App 首次运行含此功能的版本时，将一个毫秒时间戳保存在本机；后续升级沿用，删除钱包或切换钱包不改变它。每次从其他页面进入 Market 时，仅向 `POST /api/market-usage` 发送 `{ firstRunAt }` 一次；切换行情来源或周期不重复发送。Wallet、Setting、后台及普通网页不发送，没有定时心跳、失败重试或补报。不能持久保存标识时跳过统计。
+
+服务器在独立的 `market-usage.sqlite` 中保存标识、首次/最后收到时间及北京时间活跃日期；同一标识每天只计一次。请求正文仅含时间戳，不含钱包地址、余额、交易记录、API Key、版本或设备信息；统计库不保存 IP，Nginx 对此接口关闭访问日志。运维可执行 `node scripts/market-usage-stats.mjs /var/lib/pearlwallet/market-usage.sqlite` 读取累计标识数及日/周/月活，周/月按包含当天的最近 7/30 个北京时间自然日计算。首次上报数不等于实际安装数，时间戳碰撞、清除应用数据或重装也会影响准确度；结果只表示行情活跃设备估算，不能代表钱包总人数。
 
 ## APK 更新
 

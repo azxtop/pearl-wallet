@@ -13,6 +13,7 @@ import { createLighterFeed } from './lighter.mjs';
 import { createAsterFeed } from './aster.mjs';
 import { createGateFeed } from './gate.mjs';
 import { createTradeHistory } from './trade-history.mjs';
+import { createMarketUsage, validateMarketUsage } from './market-usage.mjs';
 import { BACKFILL_SECONDS, fetchPersonalTrades, mergePersonalTrades, personalTradeAverages } from './personal-trades.mjs';
 
 const HOST = process.env.PEARL_SERVER_HOST || '127.0.0.1';
@@ -33,6 +34,7 @@ const DATA_KEY = keyText ? Buffer.from(keyText, 'base64') : null;
 if (!DATA_KEY || DATA_KEY.length !== 32) throw new Error('PEARL_CREDENTIAL_KEY_FILE must contain a base64 32-byte key');
 mkdirSync(DATA_DIR, { recursive: true });
 const tradeHistory = createTradeHistory(resolve(DATA_DIR, 'trade-history.sqlite'));
+const marketUsage = createMarketUsage(resolve(DATA_DIR, 'market-usage.sqlite'));
 const db = new DatabaseSync(resolve(DATA_DIR, 'accounts.sqlite'));
 db.exec('CREATE TABLE IF NOT EXISTS connections (token_hash TEXT PRIMARY KEY, credentials TEXT NOT NULL, created_at INTEGER NOT NULL)');
 db.exec('CREATE TABLE IF NOT EXISTS personal_trade_cache (token_hash TEXT PRIMARY KEY, payload TEXT NOT NULL, covered_from INTEGER NOT NULL, synced_at INTEGER NOT NULL, legacy_complete INTEGER NOT NULL DEFAULT 0)');
@@ -518,6 +520,15 @@ async function handle(request, response) {
     return response.end();
   }
   const url = new URL(request.url || '/', `http://${HOST}:${PORT}`);
+  if (url.pathname === '/api/market-usage') {
+    if (request.method !== 'POST') { response.setHeader('Allow', 'POST'); return json(response, 405, { error: 'Method not allowed' }); }
+    let body;
+    try { body = await readBody(request); validateMarketUsage(body); }
+    catch { return json(response, 400, { error: 'Invalid usage request' }); }
+    marketUsage.record(body);
+    response.statusCode = 204;
+    return response.end();
+  }
   if (request.method === 'GET' && url.pathname === '/api/update') {
     try { return json(response, 200, JSON.parse(readFileSync(process.env.PEARL_UPDATE_FILE || resolve('server/update.json'), 'utf8'))); }
     catch { return json(response, 503, { error: 'Update metadata unavailable' }); }
